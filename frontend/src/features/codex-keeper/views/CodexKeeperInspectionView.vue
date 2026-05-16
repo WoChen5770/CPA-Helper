@@ -540,7 +540,7 @@ onBeforeUnmount(() => {
                 size="small"
                 secondary
                 :loading="isActing"
-                :disabled="isRunning || isDaemonRunning"
+                :disabled="isRunning"
                 @click="runAction(runCodexKeeperOnce, '已开始执行一轮')"
               >
                 执行一轮
