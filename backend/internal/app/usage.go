@@ -51,6 +51,18 @@ type UsageRecord struct {
 	RawJSON           string
 }
 
+func usageAPITime(value time.Time) string {
+	return value.Format("2006-01-02T15:04:05")
+}
+
+func usageAPITimePtr(value *time.Time) *string {
+	if value == nil {
+		return nil
+	}
+	formatted := usageAPITime(*value)
+	return &formatted
+}
+
 type usageAccessScope struct {
 	UserID   int
 	Username string
@@ -383,8 +395,8 @@ func (a *App) usageRecords(w http.ResponseWriter, r *http.Request, filters Usage
 		"total":     total,
 		"page":      page,
 		"page_size": pageSize,
-		"start":     scoped.Start,
-		"end":       scoped.End,
+		"start":     usageAPITimePtr(scoped.Start),
+		"end":       usageAPITimePtr(scoped.End),
 	})
 	return nil
 }
@@ -676,7 +688,7 @@ func listItemFromRecord(record UsageRecord, users map[string]userInfo, prices ma
 	}
 	return map[string]any{
 		"id":                  record.ID,
-		"timestamp":           record.Timestamp,
+		"timestamp":           usageAPITime(record.Timestamp),
 		"api_key_description": record.APIKeyDescription,
 		"user_id":             userID,
 		"user_label":          userLabel,
@@ -725,8 +737,8 @@ func usageSummaryFromRecords(filters UsageFilters, records []UsageRecord, prices
 		filters.End = &end
 	}
 	return map[string]any{
-		"start":              filters.Start,
-		"end":                filters.End,
+		"start":              usageAPITimePtr(filters.Start),
+		"end":                usageAPITimePtr(filters.End),
 		"total_records":      len(records),
 		"failed_records":     failed,
 		"success_records":    len(records) - failed,

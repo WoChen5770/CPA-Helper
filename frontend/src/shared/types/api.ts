@@ -116,6 +116,7 @@ export interface CodexKeeperStats {
 
 export interface CodexKeeperStatus {
   running: boolean
+  daemon_running: boolean
   state: string
   detail: string
   mode: string | null

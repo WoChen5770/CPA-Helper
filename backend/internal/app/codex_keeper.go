@@ -1,13 +1,17 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,7 +19,13 @@ import (
 	"time"
 )
 
-const keeperUsageURL = "https://chatgpt.com/backend-api/wham/usage"
+const (
+	keeperUsageURL         = "https://chatgpt.com/backend-api/wham/usage"
+	keeperLogFilePrefix    = "codex-keeper-"
+	keeperLogLogger        = "app.services.codex_keeper_service"
+	keeperLogRetainedFiles = 3
+	keeperMaxInMemoryLogs  = 300
+)
 
 type KeeperRunner struct {
 	app            *App
@@ -45,6 +55,7 @@ type keeperStats struct {
 
 type keeperStatusResponse struct {
 	Running        bool        `json:"running"`
+	DaemonRunning  bool        `json:"daemon_running"`
 	State          string      `json:"state"`
 	Detail         string      `json:"detail"`
 	Mode           *string     `json:"mode"`
@@ -151,12 +162,17 @@ func NewKeeperRunner(app *App) *KeeperRunner {
 }
 
 func (r *KeeperRunner) LoadPersistedState(ctx context.Context) {
+	logs, logErr := r.app.loadKeeperLogLines(keeperMaxInMemoryLogs)
+	if logErr != nil {
+		log.Printf("restore codex keeper logs failed: %v", logErr)
+	}
 	run, err := r.app.latestKeeperRun(ctx)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.logs = logs
 	if err != nil || run == nil {
 		return
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.state = run.State
 	r.detail = run.Detail
 	r.mode = run.Mode
@@ -199,13 +215,9 @@ func (r *KeeperRunner) StartDaemon() error {
 	}
 
 	r.mu.Lock()
-	if r.daemonDone != nil {
-		select {
-		case <-r.daemonDone:
-		default:
-			r.mu.Unlock()
-			return nil
-		}
+	if r.daemonRunningLocked() {
+		r.mu.Unlock()
+		return nil
 	}
 	r.daemonStop = make(chan struct{})
 	r.daemonDone = make(chan struct{})
@@ -227,27 +239,47 @@ func (r *KeeperRunner) Stop() {
 		return
 	}
 	select {
+	case <-done:
+		r.daemonStop = nil
+		r.daemonDone = nil
+		r.mu.Unlock()
+		return
+	default:
+	}
+	select {
 	case <-stop:
 	default:
 		close(stop)
 	}
 	r.mu.Unlock()
 	<-done
+	r.mu.Lock()
+	if r.daemonStop == stop {
+		r.daemonStop = nil
+	}
+	if r.daemonDone == done {
+		r.daemonDone = nil
+	}
+	r.mu.Unlock()
 	r.log("Codex Keeper 已停止自动巡检")
 }
 
 func (r *KeeperRunner) ClearLogs() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.logs = []string{}
+	r.mu.Unlock()
+	if err := r.app.clearKeeperLogFiles(); err != nil {
+		log.Printf("clear codex keeper log files failed: %v", err)
+	}
 }
 
 func (r *KeeperRunner) Status() keeperStatusResponse {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	logs := append([]string(nil), r.logs...)
+	logs := append([]string{}, r.logs...)
 	return keeperStatusResponse{
 		Running:        r.running,
+		DaemonRunning:  r.daemonRunningLocked(),
 		State:          r.state,
 		Detail:         r.detail,
 		Mode:           cloneStringPtr(r.mode),
@@ -255,6 +287,18 @@ func (r *KeeperRunner) Status() keeperStatusResponse {
 		LastFinishedAt: cloneTimePtr(r.lastFinishedAt),
 		Stats:          r.stats,
 		Logs:           logs,
+	}
+}
+
+func (r *KeeperRunner) daemonRunningLocked() bool {
+	if r.daemonDone == nil {
+		return false
+	}
+	select {
+	case <-r.daemonDone:
+		return false
+	default:
+		return true
 	}
 }
 
@@ -281,6 +325,7 @@ func (r *KeeperRunner) daemonLoop(stop <-chan struct{}, done chan<- struct{}) {
 		if delay < 0 {
 			delay = 0
 		}
+		r.log("下一轮计划：" + times[0].Format("2006-01-02 15:04:05"))
 		if waitForStop(stop, delay) {
 			return
 		}
@@ -311,35 +356,179 @@ func (r *KeeperRunner) markRunning(mode string) bool {
 func (r *KeeperRunner) run(mode string) {
 	stats, detail, err := r.app.executeKeeperRun(context.Background(), mode, r.log)
 	finishedAt := time.Now()
+	logMessage := detail
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.running = false
 	r.lastFinishedAt = &finishedAt
 	r.stats = stats
 	if err != nil {
 		r.state = "failed"
 		r.detail = err.Error()
-		r.logs = appendKeeperLog(r.logs, "巡检失败："+err.Error())
-		return
+		logMessage = "巡检失败：" + err.Error()
+	} else {
+		r.state = "completed"
+		r.detail = detail
 	}
-	r.state = "completed"
-	r.detail = detail
-	r.logs = appendKeeperLog(r.logs, detail)
+	r.mu.Unlock()
+	if strings.TrimSpace(logMessage) != "" {
+		r.log(logMessage)
+	}
 }
 
 func (r *KeeperRunner) log(message string) {
+	timestamp := time.Now()
+	line := formatKeeperLogLine(timestamp, message)
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.logs = appendKeeperLog(r.logs, message)
+	r.logs = appendKeeperLog(r.logs, line)
+	r.mu.Unlock()
+	if err := r.app.appendKeeperLogFile(timestamp, line); err != nil {
+		log.Printf("write codex keeper log failed: %v", err)
+	}
 }
 
-func appendKeeperLog(logs []string, message string) []string {
-	line := time.Now().Format("2006-01-02 15:04:05") + " " + message
+func appendKeeperLog(logs []string, line string) []string {
 	logs = append(logs, line)
-	if len(logs) > 300 {
-		logs = logs[len(logs)-300:]
+	if len(logs) > keeperMaxInMemoryLogs {
+		logs = logs[len(logs)-keeperMaxInMemoryLogs:]
 	}
 	return logs
+}
+
+func formatKeeperLogLine(timestamp time.Time, message string) string {
+	return fmt.Sprintf("%s - %s - INFO - %s", timestamp.Format("2006-01-02 15:04:05,000"), keeperLogLogger, message)
+}
+
+type keeperLogFile struct {
+	path string
+	date time.Time
+}
+
+func (a *App) keeperLogDir() string {
+	return filepath.Join(a.dataDir, "logs")
+}
+
+func (a *App) appendKeeperLogFile(timestamp time.Time, line string) error {
+	dir := a.keeperLogDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, keeperLogFilePrefix+timestamp.Format("2006-01-02")+".log")
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, writeErr := file.WriteString(line + "\n")
+	closeErr := file.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return a.pruneKeeperLogFiles()
+}
+
+func (a *App) loadKeeperLogLines(limit int) ([]string, error) {
+	files, err := a.keeperLogFiles()
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].date.Before(files[j].date)
+	})
+	if len(files) > keeperLogRetainedFiles {
+		files = files[len(files)-keeperLogRetainedFiles:]
+	}
+	lines := []string{}
+	for _, file := range files {
+		handle, err := os.Open(file.path)
+		if err != nil {
+			return nil, err
+		}
+		scanner := bufio.NewScanner(handle)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			lines = appendKeeperLog(lines, line)
+		}
+		scanErr := scanner.Err()
+		closeErr := handle.Close()
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+	}
+	if limit > 0 && len(lines) > limit {
+		return lines[len(lines)-limit:], nil
+	}
+	return lines, nil
+}
+
+func (a *App) pruneKeeperLogFiles() error {
+	files, err := a.keeperLogFiles()
+	if err != nil {
+		return err
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].date.After(files[j].date)
+	})
+	for index, file := range files {
+		if index < keeperLogRetainedFiles {
+			continue
+		}
+		if err := os.Remove(file.path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) clearKeeperLogFiles() error {
+	files, err := a.keeperLogFiles()
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		if err := os.Remove(file.path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) keeperLogFiles() ([]keeperLogFile, error) {
+	dir := a.keeperLogDir()
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	files := []keeperLogFile{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, keeperLogFilePrefix) || !strings.HasSuffix(name, ".log") {
+			continue
+		}
+		dateText := strings.TrimSuffix(strings.TrimPrefix(name, keeperLogFilePrefix), ".log")
+		date, err := time.Parse("2006-01-02", dateText)
+		if err != nil {
+			continue
+		}
+		files = append(files, keeperLogFile{
+			path: filepath.Join(dir, name),
+			date: date,
+		})
+	}
+	return files, nil
 }
 
 func (a *App) handleCodexKeeper(w http.ResponseWriter, r *http.Request) error {
@@ -750,6 +939,12 @@ func (a *App) processKeeperAuth(ctx context.Context, cfg AppConfig, authInfo map
 			}
 		}
 		logFn(name + ": " + *action)
+	} else {
+		accountType := "unknown"
+		if result.AccountType != nil && strings.TrimSpace(*result.AccountType) != "" {
+			accountType = *result.AccountType
+		}
+		logFn(fmt.Sprintf("%s: 巡检正常，类型 %s", name, accountType))
 	}
 	result.LastError = nil
 	_ = a.upsertKeeperState(ctx, result)

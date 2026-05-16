@@ -18,8 +18,33 @@ export function formatUsd(value: number): string {
   }).format(value)
 }
 
+function parseDisplayDate(value: string): Date | null {
+  const localMatch = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3})\d*)?)?)?$/,
+  )
+  if (localMatch) {
+    const [, year, month, day, hour = '0', minute = '0', second = '0', millisecond = '0'] =
+      localMatch
+    return new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second),
+      Number(millisecond.padEnd(3, '0')),
+    )
+  }
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
 export function formatDateTime(value: string | null): string {
   if (!value) {
+    return '-'
+  }
+  const date = parseDisplayDate(value)
+  if (!date) {
     return '-'
   }
   return new Intl.DateTimeFormat('zh-CN', {
@@ -28,7 +53,7 @@ export function formatDateTime(value: string | null): string {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-  }).format(new Date(value))
+  }).format(date)
 }
 
 export function formatLocalDateTimeParam(value: number): string {

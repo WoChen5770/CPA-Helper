@@ -303,43 +303,46 @@ const themeIcon = computed(() => {
         </div>
       </div>
       <NMenu
+        class="sider-menu"
         :value="selectedKey"
         :options="menuOptions"
         :root-indent="18"
         :indent="12"
         @update:value="handleMenuUpdate"
       />
-      <a
-        class="sider-version-link"
-        :href="repositoryUrl"
-        target="_blank"
-        rel="noreferrer"
-        aria-label="在 GitHub 查看 CPA Helper"
-      >
-        <NIcon :component="Github" :size="20" />
-        <span class="sider-version-text">{{ appVersion }}</span>
-      </a>
-      <div class="sider-actions">
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <NButton quaternary circle :aria-label="'切换主题'" @click="cycleTheme">
-              <template #icon>
-                <NIcon :component="themeIcon" />
-              </template>
-            </NButton>
-          </template>
-          主题
-        </NTooltip>
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <NButton quaternary circle :aria-label="'退出登录'" @click="handleLogout">
-              <template #icon>
-                <NIcon :component="LogOut" />
-              </template>
-            </NButton>
-          </template>
-          退出
-        </NTooltip>
+      <div class="sider-footer">
+        <a
+          class="sider-version-link"
+          :href="repositoryUrl"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="在 GitHub 查看 CPA Helper"
+        >
+          <NIcon :component="Github" :size="20" />
+          <span class="sider-version-text">{{ appVersion }}</span>
+        </a>
+        <div class="sider-actions">
+          <NTooltip trigger="hover">
+            <template #trigger>
+              <NButton quaternary circle :aria-label="'切换主题'" @click="cycleTheme">
+                <template #icon>
+                  <NIcon :component="themeIcon" />
+                </template>
+              </NButton>
+            </template>
+            主题
+          </NTooltip>
+          <NTooltip trigger="hover">
+            <template #trigger>
+              <NButton quaternary circle :aria-label="'退出登录'" @click="handleLogout">
+                <template #icon>
+                  <NIcon :component="LogOut" />
+                </template>
+              </NButton>
+            </template>
+            退出
+          </NTooltip>
+        </div>
       </div>
     </NLayoutSider>
 
@@ -458,6 +461,14 @@ const themeIcon = computed(() => {
   backdrop-filter: blur(22px);
 }
 
+.app-sider :deep(.n-layout-sider-scroll-container) {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 :root.dark .app-sider {
   background:
     linear-gradient(180deg, rgb(26 42 48 / 88%) 0, rgb(18 30 35 / 78%) 100%),
@@ -467,6 +478,7 @@ const themeIcon = computed(() => {
 
 .brand {
   display: flex;
+  flex: 0 0 auto;
   gap: 12px;
   align-items: center;
   padding: 28px 18px 24px;
@@ -533,8 +545,17 @@ const themeIcon = computed(() => {
   font-size: 12px;
 }
 
+.sider-menu {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--cpa-text-muted) 34%, transparent) transparent;
+}
+
 .app-sider :deep(.n-menu) {
-  padding: 0 14px 132px;
+  padding: 0 14px 12px;
 }
 
 .app-sider :deep(.n-menu-item-group-title) {
@@ -582,14 +603,20 @@ const themeIcon = computed(() => {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%);
 }
 
+.sider-footer {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 10px;
+  padding: 10px 16px 18px;
+  background: inherit;
+}
+
 .sider-version-link {
-  position: absolute;
-  right: 16px;
-  bottom: 78px;
-  left: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  box-sizing: border-box;
   min-height: 40px;
   gap: 8px;
   padding: 0 12px;
@@ -638,12 +665,10 @@ const themeIcon = computed(() => {
 }
 
 .sider-actions {
-  position: absolute;
-  right: 16px;
-  bottom: 18px;
-  left: 16px;
   display: flex;
   justify-content: space-between;
+  width: 100%;
+  box-sizing: border-box;
   padding: 8px 12px;
   border: 1px solid var(--cpa-border);
   border-radius: var(--cpa-radius);

@@ -81,9 +81,13 @@ const form = reactive({
 
 const stats = computed(() => status.value?.stats)
 const isRunning = computed(() => status.value?.running === true)
-const logText = computed(() => status.value?.logs.join('\n') ?? '')
+const isDaemonRunning = computed(() => status.value?.daemon_running === true)
+const statusLogs = computed(() =>
+  Array.isArray(status.value?.logs) ? status.value.logs : [],
+)
+const logText = computed(() => statusLogs.value.join('\n'))
 const displayedLogLines = computed(() =>
-  (status.value?.logs ?? []).map((line, index) => parseLogLine(line, index)).reverse(),
+  statusLogs.value.map((line, index) => parseLogLine(line, index)).reverse(),
 )
 const displayedPriorityRules = computed(() =>
   [...priorityRules.value].sort((left, right) => {
@@ -95,10 +99,10 @@ const displayedPriorityRules = computed(() =>
   }),
 )
 const stateType = computed(() => {
-  if (status.value?.state === 'running') {
+  if (isRunning.value || isDaemonRunning.value) {
     return 'success'
   }
-  if (status.value?.state === 'error') {
+  if (status.value?.state === 'error' || status.value?.state === 'failed') {
     return 'error'
   }
   if (status.value?.state === 'stopping') {
@@ -108,6 +112,9 @@ const stateType = computed(() => {
 })
 const statusDetailText = computed(() => {
   const detail = status.value?.detail
+  if (isDaemonRunning.value && !isRunning.value) {
+    return '自动巡检已开启'
+  }
   if (!detail) {
     return '未运行'
   }
@@ -117,6 +124,7 @@ const statusDetailText = computed(() => {
     .replace(/守护任务/g, '自动巡检任务')
     .replace(/守护已启动/g, '已开始自动巡检')
 })
+const statusFootnoteText = computed(() => (isDaemonRunning.value ? '等待 Cron 调度' : '后台自动巡检'))
 
 watch(logText, () => {
   if (shouldFollowLatestLog.value) {
@@ -421,7 +429,7 @@ onBeforeUnmount(() => {
             {{ statusDetailText }}
           </NTag>
         </div>
-        <div class="metric-footnote">后台自动巡检</div>
+        <div class="metric-footnote">{{ statusFootnoteText }}</div>
       </div>
       <div class="metric-card">
         <div class="metric-icon" aria-hidden="true">
@@ -475,7 +483,7 @@ onBeforeUnmount(() => {
                 size="small"
                 secondary
                 :loading="isActing"
-                :disabled="isRunning"
+                :disabled="isRunning || isDaemonRunning"
                 @click="runAction(runCodexKeeperOnce, '已开始执行一轮')"
               >
                 执行一轮
@@ -484,7 +492,7 @@ onBeforeUnmount(() => {
                 size="small"
                 type="primary"
                 :loading="isActing"
-                :disabled="isRunning"
+                :disabled="isRunning || isDaemonRunning"
                 @click="runAction(startCodexKeeper, '已开始自动巡检')"
               >
                 开始自动巡检
@@ -494,7 +502,7 @@ onBeforeUnmount(() => {
                 secondary
                 type="warning"
                 :loading="isActing"
-                :disabled="!isRunning"
+                :disabled="!isDaemonRunning"
                 @click="runAction(stopCodexKeeper, '已请求停止')"
               >
                 停止
@@ -544,16 +552,22 @@ onBeforeUnmount(() => {
                   </NFormItem>
                 </div>
                 <div class="switch-row">
-                  <NFormItem class="switch-form-item" label="只检查不修改">
-                    <div class="switch-control-stack">
-                      <NSwitch v-model:value="form.dry_run" />
-                      <p class="switch-help">开启后只模拟处理，不会禁用账号或调整优先级。</p>
+                  <NFormItem class="switch-form-item">
+                    <div class="switch-setting">
+                      <div class="switch-copy">
+                        <span class="switch-title">只检查不修改</span>
+                        <p class="switch-help">开启后只模拟处理，不会禁用账号或调整优先级。</p>
+                      </div>
+                      <NSwitch v-model:value="form.dry_run" class="switch-control" />
                     </div>
                   </NFormItem>
-                  <NFormItem class="switch-form-item" label="启动后自动巡检">
-                    <div class="switch-control-stack">
-                      <NSwitch v-model:value="form.auto_start_daemon" />
-                      <p class="switch-help">每次 CPA Helper 启动后，自动按上面的计划检查账号。</p>
+                  <NFormItem class="switch-form-item">
+                    <div class="switch-setting">
+                      <div class="switch-copy">
+                        <span class="switch-title">启动后自动巡检</span>
+                        <p class="switch-help">每次 CPA Helper 启动后，自动按上面的计划检查账号。</p>
+                      </div>
+                      <NSwitch v-model:value="form.auto_start_daemon" class="switch-control" />
                     </div>
                   </NFormItem>
                 </div>
@@ -713,7 +727,7 @@ onBeforeUnmount(() => {
 }
 
 .switch-form-item :deep(.n-form-item-blank) {
-  min-height: 22px;
+  min-height: 0;
 }
 
 .config-form :deep(.n-input-number),
@@ -757,23 +771,43 @@ onBeforeUnmount(() => {
 
 .switch-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(160px, 1fr));
-  gap: 8px;
-  margin-top: 8px;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .switch-form-item {
   min-width: 0;
-  padding: 6px 10px;
+}
+
+.switch-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 72px;
+  padding: 10px 12px;
   border: 1px solid var(--cpa-border);
   border-radius: 6px;
   background: var(--cpa-surface);
 }
 
-.switch-control-stack {
+.switch-copy {
   display: grid;
-  gap: 6px;
-  align-items: start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.switch-title {
+  color: var(--cpa-text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.switch-control {
+  flex: 0 0 auto;
 }
 
 .switch-help {
