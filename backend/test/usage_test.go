@@ -22,7 +22,7 @@ type usageSummaryResponse struct {
 	End   string `json:"end"`
 }
 
-func TestUsageRecordsReturnLocalWallClockTimes(t *testing.T) {
+func TestUsageRecordsReturnBeijingOffsetTimes(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("CPA_HELPER_DATA_DIR", dataDir)
 
@@ -38,7 +38,7 @@ func TestUsageRecordsReturnLocalWallClockTimes(t *testing.T) {
 		"password": "test-password",
 		"nickname": "Admin",
 	}, nil, nil)
-	seedUsageRecord(t, dataDir, "2026-05-16 16:37:00.000000")
+	seedUsageRecord(t, dataDir, "2026-05-16T16:37:00+08:00")
 
 	const recordsPath = "/api/usage/records?scope=admin&start=2026-05-16T00:00:00&end=2026-05-17T00:00:00"
 	records := usageRecordsResponse{}
@@ -46,18 +46,18 @@ func TestUsageRecordsReturnLocalWallClockTimes(t *testing.T) {
 	if len(records.Items) != 1 {
 		t.Fatalf("usage record count = %d, want 1", len(records.Items))
 	}
-	if records.Items[0].Timestamp != "2026-05-16T16:37:00" {
-		t.Fatalf("timestamp = %q, want local wall-clock value", records.Items[0].Timestamp)
+	if records.Items[0].Timestamp != "2026-05-16T16:37:00+08:00" {
+		t.Fatalf("timestamp = %q, want Beijing offset value", records.Items[0].Timestamp)
 	}
-	if records.Start != "2026-05-16T00:00:00" || records.End != "2026-05-17T00:00:00" {
-		t.Fatalf("range = %q - %q, want local wall-clock range", records.Start, records.End)
+	if records.Start != "2026-05-16T00:00:00+08:00" || records.End != "2026-05-17T00:00:00+08:00" {
+		t.Fatalf("range = %q - %q, want Beijing offset range", records.Start, records.End)
 	}
 
 	const summaryPath = "/api/usage/summary?scope=admin&start=2026-05-16T00:00:00&end=2026-05-17T00:00:00"
 	summary := usageSummaryResponse{}
 	requestJSON(t, handler, http.MethodGet, summaryPath, nil, cookies, &summary)
-	if summary.Start != "2026-05-16T00:00:00" || summary.End != "2026-05-17T00:00:00" {
-		t.Fatalf("summary range = %q - %q, want local wall-clock range", summary.Start, summary.End)
+	if summary.Start != "2026-05-16T00:00:00+08:00" || summary.End != "2026-05-17T00:00:00+08:00" {
+		t.Fatalf("summary range = %q - %q, want Beijing offset range", summary.Start, summary.End)
 	}
 }
 

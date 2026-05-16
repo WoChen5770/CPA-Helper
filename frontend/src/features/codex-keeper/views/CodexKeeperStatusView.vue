@@ -31,7 +31,7 @@ import {
   updateCodexKeeperPriority,
 } from '@/features/codex-keeper/api/codexKeeperApi'
 import type { CodexKeeperAccount, CodexKeeperPriorityRule } from '@/shared/types/api'
-import { formatDateTime, formatInteger } from '@/shared/utils/format'
+import { BEIJING_TIME_ZONE, formatDateTime, formatInteger } from '@/shared/utils/format'
 
 type FixedPriorityFilter = 'all' | 'high' | 'minusOne' | 'low'
 type PriorityTypeFilter = `type:${string}`
@@ -311,6 +311,7 @@ function formatQuotaResetTime(value: string | null): string | null {
     return null
   }
   return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: BEIJING_TIME_ZONE,
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',

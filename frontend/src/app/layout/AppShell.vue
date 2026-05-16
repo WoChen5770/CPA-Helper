@@ -298,7 +298,7 @@ const themeIcon = computed(() => {
           <img :src="logoUrl" alt="">
         </div>
         <div class="brand-copy">
-          <strong>CPA Helper</strong>
+          <strong>CPA-Helper</strong>
           <span>{{ accountText }} · {{ roleText }}</span>
         </div>
       </div>
@@ -316,7 +316,7 @@ const themeIcon = computed(() => {
           :href="repositoryUrl"
           target="_blank"
           rel="noreferrer"
-          aria-label="在 GitHub 查看 CPA Helper"
+          aria-label="在 GitHub 查看 CPA-Helper"
         >
           <NIcon :component="Github" :size="20" />
           <span class="sider-version-text">{{ appVersion }}</span>
@@ -353,11 +353,11 @@ const themeIcon = computed(() => {
             <NIcon :component="Menu" />
           </template>
         </NButton>
-        <div class="mobile-brand" aria-label="CPA Helper 账号信息">
+        <div class="mobile-brand" aria-label="CPA-Helper 账号信息">
           <img class="mobile-brand-logo" :src="logoUrl" alt="" aria-hidden="true">
           <div class="mobile-brand-copy">
             <div class="mobile-title-row">
-              <strong>CPA Helper</strong>
+              <strong>CPA-Helper</strong>
               <span class="mobile-version-badge">{{ appVersion }}</span>
             </div>
             <span>{{ accountText }} · {{ roleText }}</span>
@@ -397,7 +397,7 @@ const themeIcon = computed(() => {
     </NLayout>
 
     <NDrawer v-model:show="drawerOpen" placement="left" :width="248">
-      <NDrawerContent :title="`CPA Helper · ${appVersion}`" body-content-style="padding: 0;">
+      <NDrawerContent :title="`CPA-Helper · ${appVersion}`" body-content-style="padding: 0;">
         <NMenu :value="selectedKey" :options="menuOptions" @update:value="handleMenuUpdate" />
         <div class="drawer-actions">
           <NButton secondary @click="cycleTheme">

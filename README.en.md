@@ -1,18 +1,29 @@
-# CPA Helper
+<div align="center">
+  <img src="frontend/public/logo.png" alt="CPA-Helper Logo" width="104" height="104" />
+  <h1>CPA-Helper</h1>
+  <p><strong>A local self-hosted multi-user admin panel for CLIProxyAPI</strong></p>
+  <p>Usage analytics · Request tracing · User roles · API key management · Model pricing · Codex auth file inspection</p>
+  <p>
+    <strong>English</strong>
+    <span> · </span>
+    <a href="README.md">中文</a>
+  </p>
+  <p>
+    <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go 1.25+" /></a>
+    <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Vue-3.5+-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3.5+" /></a>
+    <a href="https://vitejs.dev/"><img src="https://img.shields.io/badge/Vite-5.4+-646cff?logo=vite&logoColor=white" alt="Vite 5.4+" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT License" /></a>
+    <a href="https://linux.do"><img src="https://shorturl.at/ggSqS" alt="LINUX DO" /></a>
+  </p>
+</div>
 
-English | [中文](README.md)
+---
 
-[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
-[![Vue](https://img.shields.io/badge/Vue-3.5+-42b883?logo=vuedotjs&logoColor=white)](https://vuejs.org/)
-[![Vite](https://img.shields.io/badge/Vite-5.4+-646cff?logo=vite&logoColor=white)](https://vitejs.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-<a href="https://linux.do" alt="LINUX DO"><img src="https://shorturl.at/ggSqS" /></a>
-
-CPA Helper is a local self-hosted multi-user administration panel for CLIProxyAPI / CPA users. It centralizes usage analytics, request records, user accounts, API keys, model pricing, available models and Codex auth file inspection.
+CPA-Helper is a local self-hosted multi-user administration panel for CLIProxyAPI / CPA users. It centralizes usage analytics, request records, user accounts, API keys, model pricing, available models and Codex auth file inspection.
 
 It separates API keys and usage data by user: each user can create and manage their own keys and inspect their own requests, tokens and cost statistics, while administrators can create or disable regular accounts and review global plus per-user usage. It is built with Go, SQLite, Vue 3 and Vite, with runtime data stored in the root-level `data/` directory by default.
 
-For clarity, model requests initiated by an Agent are still sent directly from that Agent to CPA. CPA Helper does not proxy or relay those requests; it only calls CPA management-style interfaces such as the usage queue, API key creation and deletion, and credential management for usage views, key management and credential maintenance.
+For clarity, model requests initiated by an Agent are still sent directly from that Agent to CPA. CPA-Helper does not proxy or relay those requests; it only calls CPA management-style interfaces such as the usage queue, API key creation and deletion, and credential management for usage views, key management and credential maintenance.
 
 ## Table of Contents
 
@@ -290,7 +301,7 @@ Use the System Settings page to configure:
 
 - **CLIProxyAPI / CPAMC URL**: defaults to `http://127.0.0.1:8317`.
 - **Management key**: used to access the CLIProxyAPI Management API.
-- **Enable local collector**: when enabled, CPA Helper reads events from the usage queue and writes them to the local database.
+- **Enable local collector**: when enabled, CPA-Helper reads events from the usage queue and writes them to the local database.
 - **Batch size, polling interval and retry interval**: control local collector throughput and failure retry behavior.
 
 ### Data Directory

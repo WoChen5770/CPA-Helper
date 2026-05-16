@@ -1,18 +1,29 @@
-# CPA Helper
+<div align="center">
+  <img src="frontend/public/logo.png" alt="CPA-Helper Logo" width="104" height="104" />
+  <h1>CPA-Helper</h1>
+  <p><strong>面向 CLIProxyAPI 的本地自托管多用户管理面板</strong></p>
+  <p>用量统计 · 请求追踪 · 用户权限 · API Key 管理 · 模型价格 · Codex 凭证巡检</p>
+  <p>
+    <a href="README.en.md">English</a>
+    <span> · </span>
+    <strong>中文</strong>
+  </p>
+  <p>
+    <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go 1.25+" /></a>
+    <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Vue-3.5+-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3.5+" /></a>
+    <a href="https://vitejs.dev/"><img src="https://img.shields.io/badge/Vite-5.4+-646cff?logo=vite&logoColor=white" alt="Vite 5.4+" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT License" /></a>
+    <a href="https://linux.do"><img src="https://shorturl.at/ggSqS" alt="LINUX DO" /></a>
+  </p>
+</div>
 
-[English](README.en.md) | 中文
+---
 
-[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
-[![Vue](https://img.shields.io/badge/Vue-3.5+-42b883?logo=vuedotjs&logoColor=white)](https://vuejs.org/)
-[![Vite](https://img.shields.io/badge/Vite-5.4+-646cff?logo=vite&logoColor=white)](https://vitejs.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-<a href="https://linux.do" alt="LINUX DO"><img src="https://shorturl.at/ggSqS" /></a>
-
-CPA Helper 是面向 CLIProxyAPI / CPA 用户的本地自托管多用户管理面板，用于集中管理用量统计、请求明细、用户账号、API Key、模型价格、可用模型以及 Codex auth file 巡检维护。
+CPA-Helper 是面向 CLIProxyAPI / CPA 用户的本地自托管多用户管理面板，用于集中管理用量统计、请求明细、用户账号、API Key、模型价格、可用模型以及 Codex auth file 巡检维护。
 
 它支持按用户隔离 API Key 与用量数据：每个用户都可以独立创建和管理自己的 Key，并查看属于自己的请求、Token 与费用统计；管理员可以创建或禁用普通用户账号，查看全局用量和用户维度明细，适合个人、小团队或共享 CPA 服务的内网场景。项目采用 Go + SQLite + Vue 3 + Vite 构建，默认将运行数据写入仓库根目录的 `data/` 目录。
 
-需要说明的是，Agent 发起的模型请求仍由 Agent 直接发送到 CPA，CPA Helper 不代理或中转这些请求；它只调用 CPA 的 usage 队列、API KEY 创建与删除、凭证管理等接口，用于用量查看、密钥管理和凭证维护。
+需要说明的是，Agent 发起的模型请求仍由 Agent 直接发送到 CPA，CPA-Helper 不代理或中转这些请求；它只调用 CPA 的 usage 队列、API KEY 创建与删除、凭证管理等接口，用于用量查看、密钥管理和凭证维护。
 
 ## 目录
 
@@ -290,7 +301,7 @@ http://127.0.0.1:18317
 
 - **CLIProxyAPI / CPAMC 地址**：默认 `http://127.0.0.1:8317`。
 - **管理密钥**：用于访问 CLIProxyAPI Management API。
-- **开启本地采集**：启用后，CPA Helper 会从 usage 队列读取事件并写入本地数据库。
+- **开启本地采集**：启用后，CPA-Helper 会从 usage 队列读取事件并写入本地数据库。
 - **批量读取数、轮询间隔、重试间隔**：控制本地采集任务的吞吐与失败重试。
 
 ### 数据目录

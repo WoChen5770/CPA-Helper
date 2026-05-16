@@ -561,7 +561,7 @@ pprof:
 
 建议只绑定 localhost。
 
-## 11. CPA Helper 对接建议
+## 11. CPA-Helper 对接建议
 
 如果目的是采集本地用量，优先使用：
 
@@ -585,9 +585,9 @@ remote-management:
 redis-usage-queue-retention-seconds: 60
 ```
 
-CPA Helper 这类本机采集器一般只需要本机访问，不建议开启远程 management。若必须跨机器采集，应同时开启 `allow-remote`、使用强 management key，并限制网络访问范围。
+CPA-Helper 这类本机采集器一般只需要本机访问，不建议开启远程 management。若必须跨机器采集，应同时开启 `allow-remote`、使用强 management key，并限制网络访问范围。
 
-CLIProxyAPI README 说明：从 v6.10.0 起，CLIProxyAPI/CPAMC 不再内置 usage statistics 仪表盘和持久化统计。也就是说，usage queue 仍然可以作为外部采集源，但长期存储、聚合和可视化需要由 CPA Helper 或其他 dashboard 完成。
+CLIProxyAPI README 说明：从 v6.10.0 起，CLIProxyAPI/CPAMC 不再内置 usage statistics 仪表盘和持久化统计。也就是说，usage queue 仍然可以作为外部采集源，但长期存储、聚合和可视化需要由 CPA-Helper 或其他 dashboard 完成。
 
 ## 12. 来源
 

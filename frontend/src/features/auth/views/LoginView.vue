@@ -19,7 +19,7 @@ const form = reactive({
   password: '',
   nickname: '',
 })
-const headingTitle = computed(() => (setupRequired.value ? '创建首个管理员账号' : 'CPA Helper'))
+const headingTitle = computed(() => (setupRequired.value ? '创建首个管理员账号' : 'CPA-Helper'))
 const headingSubtitle = computed(() =>
   setupRequired.value ? '首次使用前需要先录入管理员账号' : '本地 AI 用量管理控制台',
 )

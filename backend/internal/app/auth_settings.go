@@ -385,7 +385,7 @@ func (a *App) collectorState(ctx context.Context) (collectorState, error) {
 	var state collectorState
 	var lastPoll, lastSuccess, lastError sql.NullString
 	var remote sql.NullBool
-	err = a.db.QueryRowContext(ctx, `SELECT running, last_poll_at, last_success_at, last_error, remote_enabled, records_collected FROM collector_state WHERE id = 1`).Scan(&state.Running, &lastPoll, &lastSuccess, &lastError, &remote, &state.RecordsCollected)
+	err = a.db.QueryRowContext(ctx, `SELECT running, CAST(last_poll_at AS TEXT), CAST(last_success_at AS TEXT), last_error, remote_enabled, records_collected FROM collector_state WHERE id = 1`).Scan(&state.Running, &lastPoll, &lastSuccess, &lastError, &remote, &state.RecordsCollected)
 	if err != nil {
 		return collectorState{}, err
 	}

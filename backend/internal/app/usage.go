@@ -52,7 +52,7 @@ type UsageRecord struct {
 }
 
 func usageAPITime(value time.Time) string {
-	return value.Format("2006-01-02T15:04:05")
+	return apiDateTime(value)
 }
 
 func usageAPITimePtr(value *time.Time) *string {
@@ -173,7 +173,7 @@ func parseUsageFilters(r *http.Request) (UsageFilters, error) {
 }
 
 func parseQueryTime(value string) (time.Time, error) {
-	if parsed, ok := parseDBTime(value); ok {
+	if parsed, ok := parseInputTime(value); ok {
 		return parsed, nil
 	}
 	return time.Parse(time.RFC3339, value)
@@ -188,8 +188,8 @@ func stringPtrFromQuery(value string) *string {
 }
 
 func defaultTodayRange() (time.Time, time.Time) {
-	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	now := time.Now().In(appTimeLocation)
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, appTimeLocation)
 	return start, start.Add(24 * time.Hour)
 }
 
@@ -518,7 +518,7 @@ func parsePositiveInt(value string, fallback int) int {
 
 func (a *App) filteredUsageRecords(ctx context.Context, filters UsageFilters, orderBy string) ([]UsageRecord, error) {
 	where, args := usageWhere(filters)
-	query := `SELECT id, timestamp, usage_username, api_key_description, provider, model, endpoint, source,
+	query := `SELECT id, CAST(timestamp AS TEXT), usage_username, api_key_description, provider, model, endpoint, source,
 		request_id, auth, latency_ms, failed, input_tokens, output_tokens, cached_tokens,
 		reasoning_tokens, total_tokens, dedupe_key, raw_json FROM usage_records ` + where
 	if strings.TrimSpace(orderBy) != "" {
@@ -544,7 +544,7 @@ func (a *App) countUsageRecords(ctx context.Context, filters UsageFilters) (int,
 func (a *App) pagedUsageRecords(ctx context.Context, filters UsageFilters, page, pageSize int) ([]UsageRecord, error) {
 	where, args := usageWhere(filters)
 	args = append(args, pageSize, (page-1)*pageSize)
-	rows, err := a.db.QueryContext(ctx, `SELECT id, timestamp, usage_username, api_key_description, provider, model, endpoint, source,
+	rows, err := a.db.QueryContext(ctx, `SELECT id, CAST(timestamp AS TEXT), usage_username, api_key_description, provider, model, endpoint, source,
 		request_id, auth, latency_ms, failed, input_tokens, output_tokens, cached_tokens,
 		reasoning_tokens, total_tokens, dedupe_key, raw_json FROM usage_records `+where+` ORDER BY timestamp DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
@@ -555,7 +555,7 @@ func (a *App) pagedUsageRecords(ctx context.Context, filters UsageFilters, page,
 }
 
 func (a *App) getUsageRecord(ctx context.Context, id int) (UsageRecord, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT id, timestamp, usage_username, api_key_description, provider, model, endpoint, source,
+	rows, err := a.db.QueryContext(ctx, `SELECT id, CAST(timestamp AS TEXT), usage_username, api_key_description, provider, model, endpoint, source,
 		request_id, auth, latency_ms, failed, input_tokens, output_tokens, cached_tokens,
 		reasoning_tokens, total_tokens, dedupe_key, raw_json FROM usage_records WHERE id = ?`, id)
 	if err != nil {
@@ -759,9 +759,10 @@ func trendPointsFromRecords(filters UsageFilters, records []UsageRecord, prices 
 		duration = filters.End.Sub(*filters.Start)
 	}
 	for _, record := range records {
-		bucket := record.Timestamp.Format("2006-01-02")
+		timestamp := record.Timestamp.In(appTimeLocation)
+		bucket := timestamp.Format("2006-01-02")
 		if duration <= 48*time.Hour {
-			bucket = record.Timestamp.Format("2006-01-02 15:00")
+			bucket = timestamp.Format("2006-01-02 15:00")
 		}
 		buckets[bucket] = append(buckets[bucket], record)
 	}
@@ -1017,7 +1018,7 @@ func (a *App) saveUsageMessage(ctx context.Context, raw []byte) (UsageRecord, bo
 }
 
 func (a *App) usageRecordByDedupe(ctx context.Context, dedupeKey string) (UsageRecord, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT id, timestamp, usage_username, api_key_description, provider, model, endpoint, source,
+	rows, err := a.db.QueryContext(ctx, `SELECT id, CAST(timestamp AS TEXT), usage_username, api_key_description, provider, model, endpoint, source,
 		request_id, auth, latency_ms, failed, input_tokens, output_tokens, cached_tokens,
 		reasoning_tokens, total_tokens, dedupe_key, raw_json FROM usage_records WHERE dedupe_key = ?`, dedupeKey)
 	if err != nil {
@@ -1215,13 +1216,13 @@ func parseUsageTimestamp(value any) time.Time {
 		if typed > 10_000_000_000 {
 			seconds = typed / 1000
 		}
-		return time.Unix(int64(seconds), 0).Local()
+		return time.Unix(int64(seconds), 0).In(appTimeLocation)
 	case string:
-		if parsed, ok := parseDBTime(typed); ok {
+		if parsed, ok := parseInputTime(typed); ok {
 			return parsed
 		}
 	}
-	return time.Now()
+	return time.Now().In(appTimeLocation)
 }
 
 func authLabel(value any) *string {

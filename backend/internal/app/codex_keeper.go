@@ -59,8 +59,8 @@ type keeperStatusResponse struct {
 	State          string      `json:"state"`
 	Detail         string      `json:"detail"`
 	Mode           *string     `json:"mode"`
-	LastStartedAt  *time.Time  `json:"last_started_at"`
-	LastFinishedAt *time.Time  `json:"last_finished_at"`
+	LastStartedAt  *string     `json:"last_started_at"`
+	LastFinishedAt *string     `json:"last_finished_at"`
 	Stats          keeperStats `json:"stats"`
 	Logs           []string    `json:"logs"`
 }
@@ -110,6 +110,24 @@ type keeperAccount struct {
 	LatestAction         *string    `json:"latest_action"`
 	LastCheckedAt        *time.Time `json:"last_checked_at"`
 	LastHealthyAt        *time.Time `json:"last_healthy_at"`
+}
+
+type keeperAccountResponse struct {
+	Name                 string  `json:"name"`
+	Email                *string `json:"email"`
+	AccountType          *string `json:"account_type"`
+	Disabled             bool    `json:"disabled"`
+	Priority             *int    `json:"priority"`
+	PrimaryUsedPercent   *int    `json:"primary_used_percent"`
+	SecondaryUsedPercent *int    `json:"secondary_used_percent"`
+	PrimaryResetAt       *string `json:"primary_reset_at"`
+	SecondaryResetAt     *string `json:"secondary_reset_at"`
+	QuotaThreshold       *int    `json:"quota_threshold"`
+	LastStatusCode       *int    `json:"last_status_code"`
+	LastError            *string `json:"last_error"`
+	LatestAction         *string `json:"latest_action"`
+	LastCheckedAt        *string `json:"last_checked_at"`
+	LastHealthyAt        *string `json:"last_healthy_at"`
 }
 
 type keeperAuthState struct {
@@ -283,8 +301,8 @@ func (r *KeeperRunner) Status() keeperStatusResponse {
 		State:          r.state,
 		Detail:         r.detail,
 		Mode:           cloneStringPtr(r.mode),
-		LastStartedAt:  cloneTimePtr(r.lastStartedAt),
-		LastFinishedAt: cloneTimePtr(r.lastFinishedAt),
+		LastStartedAt:  apiDateTimePtr(r.lastStartedAt),
+		LastFinishedAt: apiDateTimePtr(r.lastFinishedAt),
 		Stats:          r.stats,
 		Logs:           logs,
 	}
@@ -313,7 +331,7 @@ func (r *KeeperRunner) daemonLoop(stop <-chan struct{}, done chan<- struct{}) {
 			}
 			continue
 		}
-		times, _, err := nextRunTimes(cfg.CodexKeeper.ScheduleCron, 1, time.Now())
+		times, _, err := nextRunTimes(cfg.CodexKeeper.ScheduleCron, 1, time.Now().In(appTimeLocation))
 		if err != nil {
 			r.log("Codex Keeper 定时表达式无效：" + err.Error())
 			if waitForStop(stop, time.Minute) {
@@ -325,7 +343,7 @@ func (r *KeeperRunner) daemonLoop(stop <-chan struct{}, done chan<- struct{}) {
 		if delay < 0 {
 			delay = 0
 		}
-		r.log("下一轮计划：" + times[0].Format("2006-01-02 15:04:05"))
+		r.log("下一轮计划：" + times[0].In(appTimeLocation).Format("2006-01-02 15:04:05"))
 		if waitForStop(stop, delay) {
 			return
 		}
@@ -341,7 +359,7 @@ func (r *KeeperRunner) markRunning(mode string) bool {
 	if r.running {
 		return false
 	}
-	now := time.Now()
+	now := time.Now().In(appTimeLocation)
 	runningMode := mode
 	r.running = true
 	r.state = "running"
@@ -355,7 +373,7 @@ func (r *KeeperRunner) markRunning(mode string) bool {
 
 func (r *KeeperRunner) run(mode string) {
 	stats, detail, err := r.app.executeKeeperRun(context.Background(), mode, r.log)
-	finishedAt := time.Now()
+	finishedAt := time.Now().In(appTimeLocation)
 	logMessage := detail
 	r.mu.Lock()
 	r.running = false
@@ -376,7 +394,7 @@ func (r *KeeperRunner) run(mode string) {
 }
 
 func (r *KeeperRunner) log(message string) {
-	timestamp := time.Now()
+	timestamp := time.Now().In(appTimeLocation)
 	line := formatKeeperLogLine(timestamp, message)
 	r.mu.Lock()
 	r.logs = appendKeeperLog(r.logs, line)
@@ -395,7 +413,7 @@ func appendKeeperLog(logs []string, line string) []string {
 }
 
 func formatKeeperLogLine(timestamp time.Time, message string) string {
-	return fmt.Sprintf("%s - %s - INFO - %s", timestamp.Format("2006-01-02 15:04:05,000"), keeperLogLogger, message)
+	return fmt.Sprintf("%s - %s - INFO - %s", timestamp.In(appTimeLocation).Format("2006-01-02 15:04:05,000"), keeperLogLogger, message)
 }
 
 type keeperLogFile struct {
@@ -412,7 +430,7 @@ func (a *App) appendKeeperLogFile(timestamp time.Time, line string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	path := filepath.Join(dir, keeperLogFilePrefix+timestamp.Format("2006-01-02")+".log")
+	path := filepath.Join(dir, keeperLogFilePrefix+timestamp.In(appTimeLocation).Format("2006-01-02")+".log")
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
@@ -519,7 +537,7 @@ func (a *App) keeperLogFiles() ([]keeperLogFile, error) {
 			continue
 		}
 		dateText := strings.TrimSuffix(strings.TrimPrefix(name, keeperLogFilePrefix), ".log")
-		date, err := time.Parse("2006-01-02", dateText)
+		date, err := time.ParseInLocation("2006-01-02", dateText, appTimeLocation)
 		if err != nil {
 			continue
 		}
@@ -565,7 +583,7 @@ func (a *App) handleCodexKeeper(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"schedule_cron": normalized, "next_run_times": times})
+		writeJSON(w, http.StatusOK, map[string]any{"schedule_cron": normalized, "next_run_times": apiDateTimes(times)})
 		return nil
 	case len(parts) == 1 && parts[0] == "status":
 		if err := requireMethod(r, http.MethodGet); err != nil {
@@ -581,7 +599,7 @@ func (a *App) handleCodexKeeper(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"items": accounts})
+		writeJSON(w, http.StatusOK, map[string]any{"items": keeperAccountResponses(accounts)})
 		return nil
 	case len(parts) == 1 && parts[0] == "run-once":
 		if err := requireMethod(r, http.MethodPost); err != nil {
@@ -680,7 +698,7 @@ func keeperSettingsResponse(cfg AppConfig) map[string]any {
 		"cliaproxy_url":         cfg.Collector.CLIProxyURL,
 		"management_key_set":    strings.TrimSpace(cfg.Collector.ManagementKey) != "",
 		"schedule_cron":         normalized,
-		"next_run_times":        times,
+		"next_run_times":        apiDateTimes(times),
 		"quota_threshold":       cfg.CodexKeeper.QuotaThreshold,
 		"usage_timeout_seconds": cfg.CodexKeeper.UsageTimeoutSeconds,
 		"cpa_timeout_seconds":   cfg.CodexKeeper.CPATimeoutSeconds,
@@ -690,6 +708,30 @@ func keeperSettingsResponse(cfg AppConfig) map[string]any {
 		"auto_start_daemon":     cfg.CodexKeeper.AutoStartDaemon,
 		"priority_rules":        sortedPriorityRules(cfg.CodexKeeperPriorityRule),
 	}
+}
+
+func keeperAccountResponses(accounts []keeperAccount) []keeperAccountResponse {
+	responses := make([]keeperAccountResponse, 0, len(accounts))
+	for _, account := range accounts {
+		responses = append(responses, keeperAccountResponse{
+			Name:                 account.Name,
+			Email:                account.Email,
+			AccountType:          account.AccountType,
+			Disabled:             account.Disabled,
+			Priority:             account.Priority,
+			PrimaryUsedPercent:   account.PrimaryUsedPercent,
+			SecondaryUsedPercent: account.SecondaryUsedPercent,
+			PrimaryResetAt:       apiDateTimePtr(account.PrimaryResetAt),
+			SecondaryResetAt:     apiDateTimePtr(account.SecondaryResetAt),
+			QuotaThreshold:       account.QuotaThreshold,
+			LastStatusCode:       account.LastStatusCode,
+			LastError:            account.LastError,
+			LatestAction:         account.LatestAction,
+			LastCheckedAt:        apiDateTimePtr(account.LastCheckedAt),
+			LastHealthyAt:        apiDateTimePtr(account.LastHealthyAt),
+		})
+	}
+	return responses
 }
 
 func (a *App) updateKeeperSettings(w http.ResponseWriter, r *http.Request) error {
@@ -810,7 +852,7 @@ func (a *App) executeKeeperRun(ctx context.Context, mode string, logFn func(stri
 }
 
 func (a *App) processKeeperAuth(ctx context.Context, cfg AppConfig, authInfo map[string]any, logFn func(string)) keeperAccountResult {
-	now := time.Now()
+	now := time.Now().In(appTimeLocation)
 	name := keeperString(authInfo["name"])
 	if name == "" {
 		name = "unknown"
@@ -1114,9 +1156,9 @@ func (a *App) checkKeeperUsage(ctx context.Context, cfg AppConfig, detail map[st
 func (a *App) listKeeperAccounts(ctx context.Context) ([]keeperAccount, error) {
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT auth_name, email, account_type, disabled, priority, primary_used_percent,
-		       secondary_used_percent, primary_reset_at, secondary_reset_at, quota_threshold,
-		       last_status_code, last_error, latest_action, last_checked_at, last_healthy_at,
-		       restore_priority, created_at, updated_at
+		       secondary_used_percent, CAST(primary_reset_at AS TEXT), CAST(secondary_reset_at AS TEXT), quota_threshold,
+		       last_status_code, last_error, latest_action, CAST(last_checked_at AS TEXT), CAST(last_healthy_at AS TEXT),
+		       restore_priority, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM codex_keeper_auth_states
 		ORDER BY COALESCE(email, ''), auth_name
 	`)
@@ -1138,9 +1180,9 @@ func (a *App) listKeeperAccounts(ctx context.Context) ([]keeperAccount, error) {
 func (a *App) getKeeperState(ctx context.Context, name string) (*keeperAuthState, error) {
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT auth_name, email, account_type, disabled, priority, primary_used_percent,
-		       secondary_used_percent, primary_reset_at, secondary_reset_at, quota_threshold,
-		       last_status_code, last_error, latest_action, last_checked_at, last_healthy_at,
-		       restore_priority, created_at, updated_at
+		       secondary_used_percent, CAST(primary_reset_at AS TEXT), CAST(secondary_reset_at AS TEXT), quota_threshold,
+		       last_status_code, last_error, latest_action, CAST(last_checked_at AS TEXT), CAST(last_healthy_at AS TEXT),
+		       restore_priority, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM codex_keeper_auth_states WHERE auth_name = ?
 	`, name)
 	if err != nil {
@@ -1357,7 +1399,7 @@ type keeperRunRecord struct {
 
 func (a *App) latestKeeperRun(ctx context.Context) (*keeperRunRecord, error) {
 	row := a.db.QueryRowContext(ctx, `
-		SELECT mode, state, detail, started_at, finished_at, total, healthy, status_disabled,
+		SELECT mode, state, detail, CAST(started_at AS TEXT), CAST(finished_at AS TEXT), total, healthy, status_disabled,
 		       status_enabled, priority_degraded, priority_restored, skipped, network_error
 		FROM codex_keeper_runs ORDER BY id DESC LIMIT 1
 	`)
@@ -1439,8 +1481,8 @@ func parseKeeperUsageInfo(payload map[string]any) keeperUsageInfo {
 		usage.PrimaryUsedPercent = *value
 	}
 	usage.SecondaryUsedPercent = keeperIntPtr(secondary["used_percent"])
-	usage.PrimaryResetAt = quotaResetAt(primary, time.Now())
-	usage.SecondaryResetAt = quotaResetAt(secondary, time.Now())
+	usage.PrimaryResetAt = quotaResetAt(primary, time.Now().In(appTimeLocation))
+	usage.SecondaryResetAt = quotaResetAt(secondary, time.Now().In(appTimeLocation))
 	return usage
 }
 
@@ -1453,7 +1495,7 @@ func quotaResetAt(window map[string]any, base time.Time) *time.Time {
 		if seconds > 10_000_000_000 {
 			seconds /= 1000
 		}
-		parsed := time.Unix(seconds, 0).Local()
+		parsed := time.Unix(seconds, 0).In(appTimeLocation)
 		return &parsed
 	}
 	if after := keeperIntPtr(window["reset_after_seconds"], window["resetAfterSeconds"]); after != nil && *after >= 0 {

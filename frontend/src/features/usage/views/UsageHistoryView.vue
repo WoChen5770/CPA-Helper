@@ -26,6 +26,7 @@ import type {
   UsageSummary,
 } from '@/shared/types/api'
 import {
+  BEIJING_TIME_ZONE,
   formatCompact,
   formatDateTime,
   formatInteger,
@@ -219,6 +220,7 @@ const metricRangeLabel = computed(() => {
 
 function formatMetricRangeTime(value: number): string {
   return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: BEIJING_TIME_ZONE,
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',

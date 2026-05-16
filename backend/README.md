@@ -1,6 +1,6 @@
-# CPA Helper Backend
+# CPA-Helper Backend
 
-Go backend for the local CPA Helper application.
+Go backend for the local CPA-Helper application.
 
 Run from this directory:
 

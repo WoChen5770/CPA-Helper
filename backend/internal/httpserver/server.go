@@ -34,7 +34,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("CPA Helper Go backend listening on %s", addr)
+		log.Printf("CPA-Helper Go backend listening on %s", addr)
 		errCh <- server.ListenAndServe()
 	}()
 

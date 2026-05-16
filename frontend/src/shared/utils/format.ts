@@ -18,6 +18,10 @@ export function formatUsd(value: number): string {
   }).format(value)
 }
 
+export const BEIJING_TIME_ZONE = 'Asia/Shanghai'
+const BEIJING_OFFSET = '+08:00'
+const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000
+
 function parseDisplayDate(value: string): Date | null {
   const localMatch = value.match(
     /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3})\d*)?)?)?$/,
@@ -26,13 +30,7 @@ function parseDisplayDate(value: string): Date | null {
     const [, year, month, day, hour = '0', minute = '0', second = '0', millisecond = '0'] =
       localMatch
     return new Date(
-      Number(year),
-      Number(month) - 1,
-      Number(day),
-      Number(hour),
-      Number(minute),
-      Number(second),
-      Number(millisecond.padEnd(3, '0')),
+      `${year}-${month}-${day}T${hour.padStart(2, '0')}:${minute.padStart(2, '0')}:${second.padStart(2, '0')}.${millisecond.padEnd(3, '0')}${BEIJING_OFFSET}`,
     )
   }
   const parsed = new Date(value)
@@ -48,6 +46,7 @@ export function formatDateTime(value: string | null): string {
     return '-'
   }
   return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: BEIJING_TIME_ZONE,
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -57,11 +56,11 @@ export function formatDateTime(value: string | null): string {
 }
 
 export function formatLocalDateTimeParam(value: number): string {
-  const date = new Date(value)
+  const date = new Date(value + BEIJING_OFFSET_MS)
   const pad = (part: number) => String(part).padStart(2, '0')
   return [
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
-    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
+    `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`,
+    `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}${BEIJING_OFFSET}`,
   ].join('T')
 }
 

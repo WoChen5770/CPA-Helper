@@ -419,13 +419,13 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="metric-grid">
-      <div class="metric-card">
+      <div class="metric-card inspection-status-card">
         <div class="metric-icon" aria-hidden="true">
           <Activity :size="20" :stroke-width="2.2" />
         </div>
         <div class="metric-label">运行状态</div>
-        <div class="metric-value">
-          <NTag :type="stateType" size="small" :bordered="false">
+        <div class="metric-value inspection-status-value" :title="statusDetailText">
+          <NTag class="inspection-status-tag" :type="stateType" size="small" :bordered="false">
             {{ statusDetailText }}
           </NTag>
         </div>
@@ -565,7 +565,7 @@ onBeforeUnmount(() => {
                     <div class="switch-setting">
                       <div class="switch-copy">
                         <span class="switch-title">启动后自动巡检</span>
-                        <p class="switch-help">每次 CPA Helper 启动后，自动按上面的计划检查账号。</p>
+                        <p class="switch-help">每次 CPA-Helper 启动后，自动按上面的计划检查账号。</p>
                       </div>
                       <NSwitch v-model:value="form.auto_start_daemon" class="switch-control" />
                     </div>
@@ -689,6 +689,35 @@ onBeforeUnmount(() => {
   color: var(--cpa-text-muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.inspection-status-card {
+  min-width: 0;
+}
+
+.inspection-status-value {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.inspection-status-tag {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.inspection-status-value :deep(.n-tag) {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.inspection-status-value :deep(.n-tag__content) {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .inspection-config-panel .panel-inner {

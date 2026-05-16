@@ -646,7 +646,7 @@ func (a *App) generateUniqueAPIKey(ctx context.Context) (string, error) {
 }
 
 func (a *App) allUsers(ctx context.Context) ([]UserRecord, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT id, username, is_admin, nickname, disabled_at, password_hash, password_salt, created_at, updated_at FROM users ORDER BY id`)
+	rows, err := a.db.QueryContext(ctx, `SELECT id, username, is_admin, nickname, CAST(disabled_at AS TEXT), password_hash, password_salt, CAST(created_at AS TEXT), CAST(updated_at AS TEXT) FROM users ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -686,7 +686,7 @@ func scanUser(scanner userScanner) (UserRecord, error) {
 }
 
 func (a *App) getUser(ctx context.Context, id int) (UserRecord, error) {
-	row := a.db.QueryRowContext(ctx, `SELECT id, username, is_admin, nickname, disabled_at, password_hash, password_salt, created_at, updated_at FROM users WHERE id = ?`, id)
+	row := a.db.QueryRowContext(ctx, `SELECT id, username, is_admin, nickname, CAST(disabled_at AS TEXT), password_hash, password_salt, CAST(created_at AS TEXT), CAST(updated_at AS TEXT) FROM users WHERE id = ?`, id)
 	user, err := scanUser(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -724,7 +724,7 @@ func (a *App) ensureUsernameAvailable(ctx context.Context, username string, exce
 }
 
 func (a *App) userAPIKeys(ctx context.Context, userID int) ([]UserAPIKey, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT api_key_hash, user_id, api_key, description, created_at, updated_at FROM user_api_keys WHERE user_id = ? ORDER BY created_at, api_key_hash`, userID)
+	rows, err := a.db.QueryContext(ctx, `SELECT api_key_hash, user_id, api_key, description, CAST(created_at AS TEXT), CAST(updated_at AS TEXT) FROM user_api_keys WHERE user_id = ? ORDER BY created_at, api_key_hash`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -733,7 +733,7 @@ func (a *App) userAPIKeys(ctx context.Context, userID int) ([]UserAPIKey, error)
 }
 
 func (a *App) getAPIKey(ctx context.Context, apiKeyHash string) (UserAPIKey, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT api_key_hash, user_id, api_key, description, created_at, updated_at FROM user_api_keys WHERE api_key_hash = ?`, apiKeyHash)
+	rows, err := a.db.QueryContext(ctx, `SELECT api_key_hash, user_id, api_key, description, CAST(created_at AS TEXT), CAST(updated_at AS TEXT) FROM user_api_keys WHERE api_key_hash = ?`, apiKeyHash)
 	if err != nil {
 		return UserAPIKey{}, err
 	}
@@ -766,7 +766,7 @@ func scanAPIKeys(rows *sql.Rows) ([]UserAPIKey, error) {
 
 func (a *App) keySummaries(ctx context.Context) ([]UserApiKeySummary, error) {
 	rows, err := a.db.QueryContext(ctx, `
-		SELECT k.api_key_hash, k.user_id, k.api_key, k.description, k.created_at, k.updated_at,
+		SELECT k.api_key_hash, k.user_id, k.api_key, k.description, CAST(k.created_at AS TEXT), CAST(k.updated_at AS TEXT),
 		       u.nickname, u.username
 		FROM user_api_keys k
 		LEFT JOIN users u ON u.id = k.user_id

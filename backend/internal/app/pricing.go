@@ -129,7 +129,7 @@ func (a *App) listPrices(ctx context.Context) ([]ModelPrice, error) {
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT id, provider, model, input_usd_per_million, output_usd_per_million,
 		       cached_usd_per_million, reasoning_usd_per_million, source,
-		       source_model, auto_synced, last_synced_at, updated_at
+		       source_model, auto_synced, CAST(last_synced_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM model_prices ORDER BY provider, model
 	`)
 	if err != nil {
@@ -233,7 +233,7 @@ func (a *App) getPrice(ctx context.Context, id int) (ModelPrice, error) {
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT id, provider, model, input_usd_per_million, output_usd_per_million,
 		       cached_usd_per_million, reasoning_usd_per_million, source,
-		       source_model, auto_synced, last_synced_at, updated_at
+		       source_model, auto_synced, CAST(last_synced_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM model_prices WHERE id = ?
 	`, id)
 	if err != nil {

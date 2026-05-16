@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,6 +30,8 @@ import (
 const (
 	defaultCPAURL = "http://127.0.0.1:8317"
 )
+
+var appTimeLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
 var defaultKeeperPriorityRules = map[string]int{
 	"pro_20x": 20,
@@ -231,7 +234,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
-	_ = encoder.Encode(value)
+	_ = encoder.Encode(apiJSONValue(value))
 }
 
 func writeNoContent(w http.ResponseWriter) {
@@ -504,7 +507,7 @@ func (a *App) runMigrations(ctx context.Context) error {
 }
 
 func dbTime(t time.Time) string {
-	return t.Local().Format("2006-01-02 15:04:05.999999")
+	return t.In(appTimeLocation).Format("2006-01-02T15:04:05.999999-07:00")
 }
 
 func dbTimePtr(t *time.Time) any {
@@ -514,20 +517,198 @@ func dbTimePtr(t *time.Time) any {
 	return dbTime(*t)
 }
 
+func apiDateTime(t time.Time) string {
+	return t.In(appTimeLocation).Format("2006-01-02T15:04:05-07:00")
+}
+
+func apiDateTimePtr(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	formatted := apiDateTime(*t)
+	return &formatted
+}
+
+func apiDateTimes(times []time.Time) []string {
+	formatted := make([]string, 0, len(times))
+	for _, value := range times {
+		formatted = append(formatted, apiDateTime(value))
+	}
+	return formatted
+}
+
+var timeType = reflect.TypeOf(time.Time{})
+
+func apiJSONValue(value any) any {
+	return apiJSONReflectValue(reflect.ValueOf(value))
+}
+
+func apiJSONReflectValue(value reflect.Value) any {
+	if !value.IsValid() {
+		return nil
+	}
+	if value.Type() == timeType {
+		timestamp := value.Interface().(time.Time)
+		if timestamp.IsZero() {
+			return nil
+		}
+		return apiDateTime(timestamp)
+	}
+	switch value.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		if value.IsNil() {
+			return nil
+		}
+		return apiJSONReflectValue(value.Elem())
+	case reflect.Map:
+		if value.IsNil() {
+			return nil
+		}
+		result := make(map[string]any, value.Len())
+		iter := value.MapRange()
+		for iter.Next() {
+			key := iter.Key()
+			if key.Kind() != reflect.String {
+				continue
+			}
+			result[key.String()] = apiJSONReflectValue(iter.Value())
+		}
+		return result
+	case reflect.Slice, reflect.Array:
+		if value.Kind() == reflect.Slice && value.IsNil() {
+			return nil
+		}
+		if value.Type().Elem().Kind() == reflect.Uint8 {
+			return value.Interface()
+		}
+		result := make([]any, 0, value.Len())
+		for i := 0; i < value.Len(); i++ {
+			result = append(result, apiJSONReflectValue(value.Index(i)))
+		}
+		return result
+	case reflect.Struct:
+		return apiJSONStructValue(value)
+	default:
+		if value.CanInterface() {
+			return value.Interface()
+		}
+		return nil
+	}
+}
+
+func apiJSONStructValue(value reflect.Value) map[string]any {
+	result := map[string]any{}
+	valueType := value.Type()
+	for i := 0; i < value.NumField(); i++ {
+		field := valueType.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		name, omitEmpty, ok := jsonFieldName(field)
+		if !ok {
+			continue
+		}
+		fieldValue := value.Field(i)
+		if omitEmpty && fieldValue.IsZero() {
+			continue
+		}
+		result[name] = apiJSONReflectValue(fieldValue)
+	}
+	return result
+}
+
+func jsonFieldName(field reflect.StructField) (string, bool, bool) {
+	tag := field.Tag.Get("json")
+	if tag == "-" {
+		return "", false, false
+	}
+	name, options, _ := strings.Cut(tag, ",")
+	if name == "" {
+		name = field.Name
+	}
+	omitEmpty := false
+	for _, option := range strings.Split(options, ",") {
+		if option == "omitempty" {
+			omitEmpty = true
+			break
+		}
+	}
+	return name, omitEmpty, true
+}
+
 func parseDBTime(value string) (time.Time, bool) {
 	text := strings.TrimSpace(value)
 	if text == "" {
 		return time.Time{}, false
 	}
-	layouts := []string{
+	if hasExplicitTimeZone(text) {
+		for _, layout := range zonedTimeLayouts() {
+			if parsed, err := time.Parse(layout, text); err == nil {
+				return parsed.In(appTimeLocation), true
+			}
+		}
+	}
+	return parseDBWallClockTime(text)
+}
+
+func zonedTimeLayouts() []string {
+	return []string{
 		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999-07:00",
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02T15:04:05.999999999-0700",
+		"2006-01-02T15:04:05.999999-0700",
+		"2006-01-02T15:04:05-0700",
+		"2006-01-02 15:04:05.999999999-0700",
+		"2006-01-02 15:04:05.999999-0700",
+		"2006-01-02 15:04:05-0700",
+	}
+}
+
+func parseInputTime(value string) (time.Time, bool) {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return time.Time{}, false
+	}
+	if hasExplicitTimeZone(text) {
+		for _, layout := range zonedTimeLayouts() {
+			if parsed, err := time.Parse(layout, text); err == nil {
+				return parsed.In(appTimeLocation), true
+			}
+		}
+	}
+	return parseDBWallClockTime(text)
+}
+
+func hasExplicitTimeZone(value string) bool {
+	text := strings.TrimSpace(value)
+	if len(text) <= 10 {
+		return false
+	}
+	tail := text[10:]
+	return strings.HasSuffix(tail, "Z") || strings.HasSuffix(tail, "z") ||
+		strings.Contains(tail, "+") || strings.Contains(tail, "-")
+}
+
+func parseDBWallClockTime(value string) (time.Time, bool) {
+	text := strings.TrimSpace(strings.Replace(value, "T", " ", 1))
+	for index := 10; index < len(text); index++ {
+		switch text[index] {
+		case 'Z', 'z', '+', '-':
+			text = strings.TrimSpace(text[:index])
+			index = len(text)
+		}
+	}
+	layouts := []string{
+		"2006-01-02 15:04:05.999999999",
 		"2006-01-02 15:04:05.999999",
 		"2006-01-02 15:04:05",
-		"2006-01-02T15:04:05.999999",
-		"2006-01-02T15:04:05",
+		"2006-01-02",
 	}
 	for _, layout := range layouts {
-		if parsed, err := time.ParseInLocation(layout, text, time.Local); err == nil {
+		if parsed, err := time.ParseInLocation(layout, text, appTimeLocation); err == nil {
 			return parsed, true
 		}
 	}
@@ -747,6 +928,9 @@ func parseCronExpression(expression string) (cron.Schedule, string, error) {
 	if err != nil {
 		return nil, normalized, validationError("Cron 表达式无效，请使用 5 段格式：分 时 日 月 周")
 	}
+	if spec, ok := schedule.(*cron.SpecSchedule); ok {
+		spec.Location = appTimeLocation
+	}
 	return schedule, normalized, nil
 }
 
@@ -759,9 +943,9 @@ func nextRunTimes(expression string, count int, base time.Time) ([]time.Time, st
 		count = 5
 	}
 	times := make([]time.Time, 0, count)
-	next := base
+	next := base.In(appTimeLocation)
 	for i := 0; i < count; i++ {
-		next = schedule.Next(next)
+		next = schedule.Next(next).In(appTimeLocation)
 		times = append(times, next)
 	}
 	return times, normalized, nil

@@ -27,8 +27,8 @@ func TestRunMigrationsCreatesGooseVersionAndFinalSchema(t *testing.T) {
 	if err := app.db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("query goose version: %v", err)
 	}
-	if version != 202605160002 {
-		t.Fatalf("goose version = %d, want 202605160002", version)
+	if version != 202605160003 {
+		t.Fatalf("goose version = %d, want 202605160003", version)
 	}
 }
 
@@ -163,6 +163,13 @@ func TestRunMigrationsRepairsOldPythonSchemaWithoutOldCode(t *testing.T) {
 	}
 	if usageUsername != username {
 		t.Fatalf("usage username = %q, want %q", usageUsername, username)
+	}
+	var timestamp string
+	if err := app.db.QueryRow(`SELECT timestamp FROM usage_records WHERE dedupe_key = 'dedupe-1'`).Scan(&timestamp); err != nil {
+		t.Fatalf("migrated usage timestamp not found: %v", err)
+	}
+	if timestamp != "2026-05-04T00:00:00+08:00" {
+		t.Fatalf("migrated timestamp = %q, want Beijing offset timestamp", timestamp)
 	}
 }
 
