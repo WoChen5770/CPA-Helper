@@ -23,14 +23,66 @@ func TestConditionalKeeperRefreshCandidatesUseUsageQuotaAndCache(t *testing.T) {
 		t.Fatalf("loadConfig: %v", err)
 	}
 	cfg.CodexKeeper.AccountRefreshCacheMinutes = 10
+	remoteDetails := map[string]map[string]any{
+		"remote-detail-email.json": {
+			"name":  "remote-detail-email.json",
+			"type":  "codex",
+			"email": "remote@example.com",
+		},
+		"remote-short-index.json": {
+			"name":       "remote-short-index.json",
+			"type":       "codex",
+			"auth_index": "short-auth-index",
+		},
+		"remote-list-email.json": {
+			"name":  "remote-list-email.json",
+			"type":  "codex",
+			"email": "list@example.com",
+		},
+	}
+	cpa := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"files": []map[string]any{
+					{"name": "remote-detail-email.json", "type": "codex"},
+					{"name": "remote-short-index.json", "type": "codex"},
+					{"name": "remote-list-email.json", "type": "codex", "email": "list@example.com"},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files/download":
+			detail, ok := remoteDetails[r.URL.Query().Get("name")]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(detail)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer cpa.Close()
+	cfg.Collector.CLIProxyURL = cpa.URL
+	cfg.Collector.ManagementKey = "test-management-key"
 	now := time.Now().In(appTimeLocation)
 
 	insertKeeperUsageRecord(t, app, "active-request", now.Add(-time.Minute), `{"auth_index":"active-request.json","failed":true}`)
+	insertKeeperUsageRecord(t, app, "email-request", now.Add(-time.Minute), `{"auth_index":"person@example.com"}`)
+	insertKeeperUsageRecord(t, app, "source-email-request", now.Add(-time.Minute), `{"source":"source@example.com","auth_index":"source-short-index"}`)
+	insertKeeperUsageRecord(t, app, "remote-detail-email-request", now.Add(-time.Minute), `{"auth_index":"remote@example.com"}`)
+	insertKeeperUsageRecord(t, app, "remote-list-email-request", now.Add(-time.Minute), `{"auth_index":"list@example.com"}`)
+	insertKeeperUsageRecord(t, app, "remote-short-index-request", now.Add(-time.Minute), `{"auth_index":"short-auth-index"}`)
+	insertKeeperUsageRecord(t, app, "unknown-email-request", now.Add(-time.Minute), `{"auth_index":"unknown@example.com"}`)
 	insertKeeperUsageRecord(t, app, "old-request", now.Add(-20*time.Minute), `{"auth_index":"old-request.json"}`)
 	insertKeeperUsageRecord(t, app, "cached-request", now.Add(-time.Minute), `{"auth_index":"cached-request.json"}`)
+	insertKeeperUsageRecord(t, app, "cached-email-request", now.Add(-time.Minute), `{"auth_index":"cached@example.com"}`)
 	insertKeeperUsageRecord(t, app, "no-auth-index", now.Add(-time.Minute), `{"request_id":"missing-auth-index"}`)
 
+	insertKeeperStateForCandidateWithEmail(t, app, "email-match.json", stringPtr("person@example.com"), nil, nil)
+	insertKeeperStateForCandidateWithEmail(t, app, "source-match.json", stringPtr("source@example.com"), nil, nil)
 	insertKeeperStateForCandidate(t, app, "cached-request.json", nil, timePtrValue(now.Add(-2*time.Minute)))
+	insertKeeperStateForCandidateWithEmail(t, app, "cached-email.json", stringPtr("cached@example.com"), nil, timePtrValue(now.Add(-2*time.Minute)))
 	insertKeeperStateForCandidate(t, app, "quota-due.json", timePtrValue(now.Add(-time.Minute)), nil)
 	insertKeeperStateForCandidate(t, app, "quota-future.json", timePtrValue(now.Add(time.Minute)), nil)
 	insertKeeperStateForCandidate(t, app, "quota-cached.json", timePtrValue(now.Add(-time.Minute)), timePtrValue(now.Add(-2*time.Minute)))
@@ -39,7 +91,15 @@ func TestConditionalKeeperRefreshCandidatesUseUsageQuotaAndCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("conditionalKeeperRefreshCandidates: %v", err)
 	}
-	assertStringSet(t, names, []string{"active-request.json", "quota-due.json"})
+	assertStringSet(t, names, []string{
+		"active-request.json",
+		"email-match.json",
+		"source-match.json",
+		"remote-detail-email.json",
+		"remote-list-email.json",
+		"remote-short-index.json",
+		"quota-due.json",
+	})
 }
 
 func TestAutomaticKeeperRunsRespectCacheButManualRefreshBypasses(t *testing.T) {
@@ -209,6 +269,10 @@ func configureKeeperTestCPA(t *testing.T, app *App, url string, mutate func(*App
 func insertKeeperUsageRecord(t *testing.T, app *App, dedupe string, timestamp time.Time, rawJSON string) {
 	t.Helper()
 	now := dbTime(time.Now().In(appTimeLocation))
+	source := "test"
+	if value := rawJSONStringField(rawJSON, "source"); value != nil {
+		source = *value
+	}
 	_, err := app.db.Exec(`
 		INSERT INTO usage_records (
 			created_at, timestamp, usage_username, api_key_description, provider,
@@ -216,8 +280,8 @@ func insertKeeperUsageRecord(t *testing.T, app *App, dedupe string, timestamp ti
 			input_tokens, output_tokens, cached_tokens, reasoning_tokens,
 			total_tokens, dedupe_key, raw_json
 		) VALUES (?, ?, NULL, NULL, 'codex', 'gpt-test', '/v1/responses',
-			'test', ?, 'api_key', 10, 1, 1, 1, 0, 0, 2, ?, ?)
-	`, now, dbTime(timestamp), dedupe, "conditional-"+dedupe, rawJSON)
+			?, ?, 'api_key', 10, 1, 1, 1, 0, 0, 2, ?, ?)
+	`, now, dbTime(timestamp), source, dedupe, "conditional-"+dedupe, rawJSON)
 	if err != nil {
 		t.Fatalf("insert usage record %s: %v", dedupe, err)
 	}
@@ -225,19 +289,29 @@ func insertKeeperUsageRecord(t *testing.T, app *App, dedupe string, timestamp ti
 
 func insertKeeperStateForCandidate(t *testing.T, app *App, name string, primaryResetAt *time.Time, lastCheckedAt *time.Time) {
 	t.Helper()
+	insertKeeperStateForCandidateWithEmail(t, app, name, nil, primaryResetAt, lastCheckedAt)
+}
+
+func insertKeeperStateForCandidateWithEmail(t *testing.T, app *App, name string, email *string, primaryResetAt *time.Time, lastCheckedAt *time.Time) {
+	t.Helper()
 	now := dbTime(time.Now().In(appTimeLocation))
 	_, err := app.db.Exec(`
 		INSERT INTO codex_keeper_auth_states (
-			auth_name, disabled, primary_reset_at, last_checked_at, created_at, updated_at
-		) VALUES (?, 0, ?, ?, ?, ?)
+			auth_name, email, disabled, primary_reset_at, last_checked_at, created_at, updated_at
+		) VALUES (?, ?, 0, ?, ?, ?, ?)
 		ON CONFLICT(auth_name) DO UPDATE SET
+			email = excluded.email,
 			primary_reset_at = excluded.primary_reset_at,
 			last_checked_at = excluded.last_checked_at,
 			updated_at = excluded.updated_at
-	`, name, dbTimePtr(primaryResetAt), dbTimePtr(lastCheckedAt), now, now)
+	`, name, email, dbTimePtr(primaryResetAt), dbTimePtr(lastCheckedAt), now, now)
 	if err != nil {
 		t.Fatalf("insert keeper state %s: %v", name, err)
 	}
+}
+
+func stringPtr(value string) *string {
+	return &value
 }
 
 func timePtrValue(value time.Time) *time.Time {

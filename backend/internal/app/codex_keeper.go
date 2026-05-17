@@ -1052,8 +1052,14 @@ func keeperRefreshCacheDuration(cfg AppConfig) time.Duration {
 func (a *App) conditionalKeeperRefreshCandidates(ctx context.Context, cfg AppConfig) ([]string, error) {
 	cacheWindow := keeperRefreshCacheDuration(cfg)
 	since := time.Now().In(appTimeLocation).Add(-cacheWindow)
+	aliases, err := a.keeperAuthNameAliases(ctx)
+	if err != nil {
+		return nil, err
+	}
 	names := []string{}
 	seen := map[string]bool{}
+	usageIdentifiers := []string{}
+	seenUsageIdentifiers := map[string]bool{}
 	addName := func(name string) {
 		normalized := strings.TrimSpace(name)
 		if normalized == "" || seen[normalized] {
@@ -1062,9 +1068,27 @@ func (a *App) conditionalKeeperRefreshCandidates(ctx context.Context, cfg AppCon
 		seen[normalized] = true
 		names = append(names, normalized)
 	}
+	addUsageIdentifier := func(identifier string, allowOpaque bool) bool {
+		normalized := strings.TrimSpace(identifier)
+		aliasKey := keeperAuthAliasKey(normalized)
+		if aliasKey == "" || seenUsageIdentifiers[aliasKey] {
+			return len(keeperAuthNamesForUsageIdentifier(normalized, aliases)) > 0
+		}
+		if !allowOpaque && !keeperLooksLikeAuthIdentifier(normalized, aliases) {
+			return false
+		}
+		seenUsageIdentifiers[aliasKey] = true
+		usageIdentifiers = append(usageIdentifiers, normalized)
+		resolved := false
+		for _, name := range keeperAuthNamesForUsageIdentifier(normalized, aliases) {
+			addName(name)
+			resolved = true
+		}
+		return resolved
+	}
 
 	rows, err := a.db.QueryContext(ctx, `
-		SELECT raw_json
+		SELECT source, raw_json
 		FROM usage_records
 		WHERE timestamp >= ?
 		ORDER BY timestamp DESC
@@ -1073,13 +1097,31 @@ func (a *App) conditionalKeeperRefreshCandidates(ctx context.Context, cfg AppCon
 		return nil, err
 	}
 	for rows.Next() {
+		var source sql.NullString
 		var rawJSON string
-		if err := rows.Scan(&rawJSON); err != nil {
+		if err := rows.Scan(&source, &rawJSON); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
-		if authIndex := rawJSONStringField(rawJSON, "auth_index"); authIndex != nil {
-			addName(*authIndex)
+		sourceResolved := false
+		if source.Valid {
+			sourceResolved = addUsageIdentifier(source.String, false)
+		}
+		if identifier := rawJSONStringField(rawJSON, "source"); identifier != nil {
+			sourceResolved = addUsageIdentifier(*identifier, false) || sourceResolved
+		}
+		if sourceResolved {
+			continue
+		}
+		for _, field := range []string{"auth_index", "authIndex", "index", "auth_name", "authName", "account_id", "accountId"} {
+			if identifier := rawJSONStringField(rawJSON, field); identifier != nil {
+				addUsageIdentifier(*identifier, true)
+			}
+		}
+		for _, field := range []string{"email", "account_email", "accountEmail", "user_email", "userEmail"} {
+			if identifier := rawJSONStringField(rawJSON, field); identifier != nil {
+				addUsageIdentifier(*identifier, false)
+			}
 		}
 	}
 	if err := rows.Close(); err != nil {
@@ -1087,6 +1129,9 @@ func (a *App) conditionalKeeperRefreshCandidates(ctx context.Context, cfg AppCon
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	for _, name := range a.keeperAuthNamesFromRemoteUsageIdentifiers(ctx, cfg, usageIdentifiers, aliases) {
+		addName(name)
 	}
 
 	rows, err = a.db.QueryContext(ctx, `
@@ -1116,6 +1161,167 @@ func (a *App) conditionalKeeperRefreshCandidates(ctx context.Context, cfg AppCon
 
 	filtered, _, err := a.filterKeeperCachedAuthNames(ctx, names, cfg)
 	return filtered, err
+}
+
+func (a *App) keeperAuthNameAliases(ctx context.Context) (map[string][]string, error) {
+	rows, err := a.db.QueryContext(ctx, `
+		SELECT auth_name, email
+		FROM codex_keeper_auth_states
+		ORDER BY auth_name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	aliases := map[string][]string{}
+	for rows.Next() {
+		var name string
+		var email sql.NullString
+		if err := rows.Scan(&name, &email); err != nil {
+			return nil, err
+		}
+		addKeeperAuthAlias(aliases, name, name)
+		if email.Valid {
+			addKeeperAuthAlias(aliases, email.String, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return aliases, nil
+}
+
+func (a *App) keeperAuthNamesFromRemoteUsageIdentifiers(ctx context.Context, cfg AppConfig, identifiers []string, aliases map[string][]string) []string {
+	if !keeperHasUnresolvedUsageIdentifiers(identifiers, aliases) || strings.TrimSpace(cfg.Collector.CLIProxyURL) == "" {
+		return nil
+	}
+	authFiles, err := a.listKeeperRemoteAuthFiles(ctx, cfg)
+	if err != nil {
+		return nil
+	}
+	codexFiles := make([]map[string]any, 0, len(authFiles))
+	for _, item := range authFiles {
+		if keeperString(item["type"]) != "codex" {
+			continue
+		}
+		codexFiles = append(codexFiles, item)
+		addKeeperAuthObjectAliases(aliases, item)
+	}
+	if !keeperHasUnresolvedUsageIdentifiers(identifiers, aliases) {
+		return keeperAuthNamesForUsageIdentifiers(identifiers, aliases)
+	}
+	for _, item := range codexFiles {
+		name := keeperString(item["name"])
+		if name == "" {
+			continue
+		}
+		detail, err := a.getKeeperRemoteAuthFile(ctx, cfg, name)
+		if err != nil || detail == nil {
+			continue
+		}
+		merged := mergeKeeperObjects(item, detail)
+		addKeeperAuthObjectAliases(aliases, merged)
+		if !keeperHasUnresolvedUsageIdentifiers(identifiers, aliases) {
+			break
+		}
+	}
+	return keeperAuthNamesForUsageIdentifiers(identifiers, aliases)
+}
+
+func keeperHasUnresolvedUsageIdentifiers(identifiers []string, aliases map[string][]string) bool {
+	for _, identifier := range identifiers {
+		if len(keeperAuthNamesForUsageIdentifier(identifier, aliases)) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func keeperAuthNamesForUsageIdentifiers(identifiers []string, aliases map[string][]string) []string {
+	names := []string{}
+	seen := map[string]bool{}
+	for _, identifier := range identifiers {
+		for _, name := range keeperAuthNamesForUsageIdentifier(identifier, aliases) {
+			normalized := strings.TrimSpace(name)
+			if normalized == "" || seen[normalized] {
+				continue
+			}
+			seen[normalized] = true
+			names = append(names, normalized)
+		}
+	}
+	return names
+}
+
+func keeperAuthNamesForUsageIdentifier(identifier string, aliases map[string][]string) []string {
+	normalized := strings.TrimSpace(identifier)
+	if normalized == "" {
+		return nil
+	}
+	if names := aliases[keeperAuthAliasKey(normalized)]; len(names) > 0 {
+		return names
+	}
+	if strings.HasSuffix(strings.ToLower(normalized), ".json") {
+		return []string{normalized}
+	}
+	return nil
+}
+
+func keeperLooksLikeAuthIdentifier(identifier string, aliases map[string][]string) bool {
+	normalized := strings.TrimSpace(identifier)
+	if normalized == "" {
+		return false
+	}
+	if len(aliases[keeperAuthAliasKey(normalized)]) > 0 {
+		return true
+	}
+	lower := strings.ToLower(normalized)
+	return strings.HasSuffix(lower, ".json") || strings.Contains(normalized, "@")
+}
+
+func addKeeperAuthObjectAliases(aliases map[string][]string, object map[string]any) {
+	name := keeperString(object["name"])
+	if name == "" {
+		return
+	}
+	addKeeperAuthAlias(aliases, name, name)
+	for _, key := range []string{"auth_name", "authName", "auth_index", "authIndex", "index", "source", "email", "account_email", "accountEmail", "user_email", "userEmail", "account_id", "accountId"} {
+		if value := keeperAliasString(object[key]); value != "" {
+			addKeeperAuthAlias(aliases, value, name)
+		}
+	}
+}
+
+func addKeeperAuthAlias(aliases map[string][]string, alias string, name string) {
+	normalizedAlias := keeperAuthAliasKey(alias)
+	normalizedName := strings.TrimSpace(name)
+	if normalizedAlias == "" || normalizedName == "" {
+		return
+	}
+	for _, existing := range aliases[normalizedAlias] {
+		if existing == normalizedName {
+			return
+		}
+	}
+	aliases[normalizedAlias] = append(aliases[normalizedAlias], normalizedName)
+}
+
+func keeperAliasString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case float64:
+		return strings.TrimSpace(strconv.FormatFloat(typed, 'f', -1, 64))
+	case int:
+		return strconv.Itoa(typed)
+	default:
+		return ""
+	}
+}
+
+func keeperAuthAliasKey(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func (a *App) filterKeeperCachedAuthItems(ctx context.Context, items []map[string]any, cfg AppConfig) ([]map[string]any, int, error) {
