@@ -932,7 +932,7 @@ func (a *App) executeKeeperRunForAccounts(ctx context.Context, mode string, auth
 	return stats, detail, nil
 }
 
-func (a *App) processKeeperAuth(ctx context.Context, cfg AppConfig, authInfo map[string]any, logFn func(string), stateOnly bool) keeperAccountResult {
+func (a *App) processKeeperAuth(ctx context.Context, cfg AppConfig, authInfo map[string]any, logFn func(string), manualRefresh bool) keeperAccountResult {
 	now := time.Now().In(appTimeLocation)
 	name := keeperString(authInfo["name"])
 	if name == "" {
@@ -961,7 +961,7 @@ func (a *App) processKeeperAuth(ctx context.Context, cfg AppConfig, authInfo map
 	disabled := keeperBool(merged["disabled"])
 	result.Disabled = &disabled
 	result.AccountType = accountTypeFromKeeperDetail(merged, nil)
-	if disabled {
+	if disabled && !manualRefresh {
 		result.Result = "disabled"
 		a.preserveKeeperBadCredentialDiagnosis(ctx, &result)
 		_ = a.upsertKeeperState(ctx, result)
@@ -970,19 +970,22 @@ func (a *App) processKeeperAuth(ctx context.Context, cfg AppConfig, authInfo map
 	if keeperString(merged["access_token"]) == "" {
 		message := "缺少 access token"
 		action := "刷新发现凭证不可用：" + message
-		if !stateOnly && !cfg.CodexKeeper.DryRun {
-			if err := a.setKeeperRemoteDisabled(ctx, cfg, name, true); err != nil {
-				message = "禁用坏凭证失败：" + err.Error()
-				result.LastError = &message
-				result.Result = "network_error"
-				_ = a.upsertKeeperState(ctx, result)
-				return result
+		if !cfg.CodexKeeper.DryRun {
+			if !disabled {
+				if err := a.setKeeperRemoteDisabled(ctx, cfg, name, true); err != nil {
+					message = "禁用坏凭证失败：" + err.Error()
+					result.LastError = &message
+					result.Result = "network_error"
+					_ = a.upsertKeeperState(ctx, result)
+					return result
+				}
 			}
 			_ = a.setKeeperRemotePriority(ctx, cfg, name, nil)
 			disabled = true
 			result.Disabled = &disabled
+			result.Priority = nil
 			action = "禁用凭证：" + message
-		} else if !stateOnly {
+		} else {
 			action = "模拟禁用：" + message
 		}
 		result.Result = "status_disabled"
@@ -1010,19 +1013,22 @@ func (a *App) processKeeperAuth(ctx context.Context, cfg AppConfig, authInfo map
 			message += "，" + usageResult.Brief
 		}
 		action := "刷新发现凭证不可用：" + message
-		if !stateOnly && !cfg.CodexKeeper.DryRun {
-			if err := a.setKeeperRemoteDisabled(ctx, cfg, name, true); err != nil {
-				message = "禁用坏凭证失败：" + err.Error()
-				result.Result = "network_error"
-				result.LastError = &message
-				_ = a.upsertKeeperState(ctx, result)
-				return result
+		if !cfg.CodexKeeper.DryRun {
+			if !disabled {
+				if err := a.setKeeperRemoteDisabled(ctx, cfg, name, true); err != nil {
+					message = "禁用坏凭证失败：" + err.Error()
+					result.Result = "network_error"
+					result.LastError = &message
+					_ = a.upsertKeeperState(ctx, result)
+					return result
+				}
 			}
 			_ = a.setKeeperRemotePriority(ctx, cfg, name, nil)
 			disabled = true
 			result.Disabled = &disabled
+			result.Priority = nil
 			action = "禁用凭证：" + message
-		} else if !stateOnly {
+		} else {
 			action = "模拟禁用：" + message
 		}
 		result.Result = "status_disabled"
@@ -1052,7 +1058,7 @@ func (a *App) processKeeperAuth(ctx context.Context, cfg AppConfig, authInfo map
 	result.QuotaThreshold = &cfg.CodexKeeper.QuotaThreshold
 	result.Result = "healthy"
 
-	if stateOnly {
+	if manualRefresh {
 		accountType := "unknown"
 		if result.AccountType != nil && strings.TrimSpace(*result.AccountType) != "" {
 			accountType = *result.AccountType

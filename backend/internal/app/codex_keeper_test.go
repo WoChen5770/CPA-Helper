@@ -515,7 +515,7 @@ func TestKeeperRefreshAccountsOnlyProcessesSelectedAuths(t *testing.T) {
 	}
 }
 
-func TestKeeperRefreshAccountsUpdatesStateWithoutRemoteMutation(t *testing.T) {
+func TestKeeperRefreshAccountsDisablesBadCredential(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("CPA_HELPER_DATA_DIR", dataDir)
 
@@ -634,6 +634,7 @@ func TestKeeperRefreshAccountsUpdatesStateWithoutRemoteMutation(t *testing.T) {
 		Priority       *int
 		LastStatusCode *int
 		LastError      *string
+		LatestAction   *string
 	}{}
 	for _, item := range response.Items {
 		items[item.Name] = struct {
@@ -641,11 +642,13 @@ func TestKeeperRefreshAccountsUpdatesStateWithoutRemoteMutation(t *testing.T) {
 			Priority       *int
 			LastStatusCode *int
 			LastError      *string
+			LatestAction   *string
 		}{
 			Disabled:       item.Disabled,
 			Priority:       item.Priority,
 			LastStatusCode: item.LastStatusCode,
 			LastError:      item.LastError,
+			LatestAction:   item.LatestAction,
 		}
 	}
 
@@ -657,8 +660,8 @@ func TestKeeperRefreshAccountsUpdatesStateWithoutRemoteMutation(t *testing.T) {
 		t.Fatalf("quota-high last_error = %v, want nil", *quota.LastError)
 	}
 	bad := items["bad-token.json"]
-	if bad.Disabled {
-		t.Fatal("bad-token disabled = true, want false when refresh only updates state")
+	if !bad.Disabled {
+		t.Fatal("bad-token disabled = false, want refresh to disable bad credential")
 	}
 	if bad.LastStatusCode == nil || *bad.LastStatusCode != 401 {
 		t.Fatalf("bad-token last_status_code = %v, want 401", bad.LastStatusCode)
@@ -666,14 +669,17 @@ func TestKeeperRefreshAccountsUpdatesStateWithoutRemoteMutation(t *testing.T) {
 	if bad.LastError == nil || !strings.Contains(*bad.LastError, "凭证不可用") {
 		t.Fatalf("bad-token last_error = %v, want credential error", bad.LastError)
 	}
+	if bad.LatestAction == nil || !strings.Contains(*bad.LatestAction, "禁用凭证") {
+		t.Fatalf("bad-token latest_action = %v, want keeper disable action", bad.LatestAction)
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
-	if statusPatchCount != 0 {
-		t.Fatalf("status patch count = %d, want 0", statusPatchCount)
+	if statusPatchCount != 1 {
+		t.Fatalf("status patch count = %d, want 1", statusPatchCount)
 	}
-	if priorityPatchCount != 0 {
-		t.Fatalf("priority patch count = %d, want 0", priorityPatchCount)
+	if priorityPatchCount != 1 {
+		t.Fatalf("priority patch count = %d, want 1", priorityPatchCount)
 	}
 }
 
@@ -837,6 +843,164 @@ func TestKeeperRunPreservesBadCredentialDiagnosisAfterRemoteDisabled(t *testing.
 	}
 	if statusPatchCount != 1 {
 		t.Fatalf("status patch count = %d, want 1", statusPatchCount)
+	}
+	if priorityPatchCount != 1 {
+		t.Fatalf("priority patch count = %d, want 1", priorityPatchCount)
+	}
+}
+
+func TestKeeperRefreshDisabledAccountChecksUsageAndRecordsBadCredential(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("CPA_HELPER_DATA_DIR", dataDir)
+
+	const authName = "disabled-bad-token.json"
+	authDetails := map[string]map[string]any{
+		authName: {
+			"name":         authName,
+			"type":         "codex",
+			"email":        "disabled-bad@example.com",
+			"account_type": "free",
+			"disabled":     true,
+			"priority":     4,
+			"access_token": "bad-token",
+			"auth_index":   authName,
+		},
+	}
+	var mu sync.Mutex
+	usageCalls := 0
+	statusPatchCount := 0
+	priorityPatchCount := 0
+
+	cpa := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"files": []map[string]any{{"name": authName, "type": "codex"}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files/download":
+			name := r.URL.Query().Get("name")
+			mu.Lock()
+			detail, ok := authDetails[name]
+			if !ok {
+				mu.Unlock()
+				http.NotFound(w, r)
+				return
+			}
+			copied := map[string]any{}
+			for key, value := range detail {
+				copied[key] = value
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(copied)
+		case r.Method == http.MethodPost && r.URL.Path == "/v0/management/api-call":
+			mu.Lock()
+			usageCalls++
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status_code": 401,
+				"body": map[string]any{
+					"error": map[string]any{
+						"message": "Your authentication token has been invalidated.",
+						"type":    "invalid_request_error",
+						"code":    "token_invalidated",
+					},
+					"status": 401,
+				},
+			})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v0/management/auth-files/status":
+			mu.Lock()
+			statusPatchCount++
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v0/management/auth-files/fields":
+			var payload struct {
+				Name     string `json:"name"`
+				Priority *int   `json:"priority"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			priorityPatchCount++
+			if detail, ok := authDetails[payload.Name]; ok {
+				if payload.Priority == nil {
+					delete(detail, "priority")
+				} else {
+					detail["priority"] = *payload.Priority
+				}
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer cpa.Close()
+
+	app, err := backendApp.New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+
+	handler := app.Routes()
+	cookies := requestJSON(t, handler, http.MethodPost, "/api/auth/setup", map[string]any{
+		"username": "admin",
+		"password": "test-password",
+		"nickname": "Admin",
+	}, nil, nil)
+	requestJSON(t, handler, http.MethodPut, "/api/settings", map[string]any{
+		"cliaproxy_url":     cpa.URL,
+		"management_key":    "test-management-key",
+		"collector_enabled": false,
+	}, cookies, nil)
+	requestJSON(t, handler, http.MethodPut, "/api/codex-keeper/settings", map[string]any{
+		"schedule_cron":       "0 0 29 2 *",
+		"dry_run":             false,
+		"worker_threads":      1,
+		"cpa_timeout_seconds": 1,
+	}, cookies, nil)
+
+	requestJSON(t, handler, http.MethodPost, "/api/codex-keeper/accounts/refresh", map[string]any{
+		"auth_names": []string{authName},
+	}, cookies, nil)
+	response := waitForKeeperAccounts(t, handler, cookies, 1)
+	item := response.Items[0]
+	if !item.Disabled {
+		t.Fatal("disabled-bad-token disabled = false, want true")
+	}
+	if item.LastStatusCode == nil || *item.LastStatusCode != 401 {
+		t.Fatalf("disabled-bad-token last_status_code = %v, want 401", item.LastStatusCode)
+	}
+	if item.LastError == nil || !strings.Contains(*item.LastError, "凭证不可用") {
+		t.Fatalf("disabled-bad-token last_error = %v, want credential error", item.LastError)
+	}
+	if item.LatestAction == nil || !strings.Contains(*item.LatestAction, "禁用凭证") {
+		t.Fatalf("disabled-bad-token latest_action = %v, want keeper disable action", item.LatestAction)
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(dataDir, "db", "cpa_helper.sqlite3")+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("open sqlite db: %v", err)
+	}
+	defer db.Close()
+	var statusDisabled, skipped int
+	if err := db.QueryRow(`SELECT status_disabled, skipped FROM codex_keeper_runs ORDER BY id DESC LIMIT 1`).Scan(&statusDisabled, &skipped); err != nil {
+		t.Fatalf("read latest keeper run stats: %v", err)
+	}
+	if statusDisabled != 1 || skipped != 0 {
+		t.Fatalf("latest keeper run stats status_disabled=%d skipped=%d, want 1/0", statusDisabled, skipped)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if usageCalls != 1 {
+		t.Fatalf("usage calls = %d, want 1", usageCalls)
+	}
+	if statusPatchCount != 0 {
+		t.Fatalf("status patch count = %d, want 0 because account was already disabled", statusPatchCount)
 	}
 	if priorityPatchCount != 1 {
 		t.Fatalf("priority patch count = %d, want 1", priorityPatchCount)

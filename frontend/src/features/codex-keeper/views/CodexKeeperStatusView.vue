@@ -73,8 +73,8 @@ const ACCOUNT_STATUS_PREFERENCE_STORAGE_KEY = 'cpa-helper-codex-keeper-status-pr
 const ACCOUNT_TABLE_MIN_ROW_HEIGHT = 52
 const ACCOUNT_TABLE_MAX_HEIGHT = 'min(620px, max(320px, calc(100dvh - 430px)))'
 const ACCOUNT_TABLE_VIRTUAL_THRESHOLD = 200
-const disabledTableScrollX = 1850
-const normalTableScrollX = 1814
+const disabledTableScrollX = 1302
+const normalTableScrollX = 1526
 const REFRESH_STATUS_POLL_INTERVAL_MS = 1500
 const message = useMessage()
 const isLoading = ref(false)
@@ -652,8 +652,12 @@ function quotaWindowLabels(accountType: string | null): { primary: string; secon
   return { primary: '主', secondary: '次' }
 }
 
+function shouldShowQuotaWindow(account: CodexKeeperAccount): boolean {
+  return !account.disabled
+}
+
 function quotaWindowItems(account: CodexKeeperAccount): QuotaWindowItem[] {
-  if (account.primary_used_percent === null) {
+  if (!shouldShowQuotaWindow(account) || account.primary_used_percent === null) {
     return []
   }
   const labels = quotaWindowLabels(account.account_type)
@@ -675,6 +679,9 @@ function quotaWindowItems(account: CodexKeeperAccount): QuotaWindowItem[] {
 }
 
 function quotaSortRemainingPercent(account: CodexKeeperAccount, key: AccountSortKey): number | null {
+  if (!shouldShowQuotaWindow(account)) {
+    return null
+  }
   const normalized = account.account_type?.trim().toLowerCase()
   if (key === 'quotaDay') {
     if (normalized === 'free') {
@@ -748,6 +755,30 @@ function latestActionText(account: CodexKeeperAccount): string {
   return account.last_error?.trim() || account.latest_action?.trim() || '-'
 }
 
+function disabledCardErrorText(account: CodexKeeperAccount): string {
+  if (!account.disabled) {
+    return ''
+  }
+  return (
+    account.last_error?.trim() ||
+    account.latest_action?.trim() ||
+    disabledStatusCodeTitle(account) ||
+    '暂无报错信息'
+  )
+}
+
+function disabledStatusCodeText(account: CodexKeeperAccount): string | null {
+  if (!account.disabled || account.last_status_code == null) {
+    return null
+  }
+  return `${account.last_status_code}`
+}
+
+function disabledStatusCodeTitle(account: CodexKeeperAccount): string | null {
+  const text = disabledStatusCodeText(account)
+  return text === null ? null : `HTTP ${text}`
+}
+
 function renderQuotaCell(account: CodexKeeperAccount) {
   const items = quotaWindowItems(account)
   if (items.length === 0) {
@@ -783,6 +814,72 @@ function renderQuotaCell(account: CodexKeeperAccount) {
         ],
       )
     }),
+  )
+}
+
+function renderAccountIdentityCell(account: CodexKeeperAccount) {
+  const primary = account.email ?? account.name
+  const statusCode = disabledStatusCodeText(account)
+  const statusLabel = `${account.disabled ? '已禁用' : '启用中'}${statusCode ? ` ${statusCode}` : ''}`
+  return h(
+    'div',
+    {
+      class: 'account-table-identity',
+      title: `${primary}\n${account.name}\n状态 ${statusLabel}`,
+    },
+    [
+      h('span', { class: 'account-table-email' }, primary),
+      h('span', { class: 'account-table-name' }, account.name),
+      h('span', { class: 'account-table-meta' }, [
+        h(
+          'span',
+          { class: ['account-table-chip', account.disabled ? 'is-warning' : 'is-success'] },
+          statusLabel,
+        ),
+      ]),
+    ],
+  )
+}
+
+function renderAccountTypeCell(account: CodexKeeperAccount) {
+  const typeLabel = account.account_type ?? '未知'
+  return h(
+    'span',
+    { class: ['account-table-chip', 'is-type'], title: typeLabel },
+    typeLabel,
+  )
+}
+
+function renderAccountPriorityCell(account: CodexKeeperAccount) {
+  const priorityLabel = formatInteger(accountPriority(account))
+  return h(
+    'span',
+    { class: ['account-table-chip', 'is-priority'], title: `优先级 ${priorityLabel}` },
+    priorityLabel,
+  )
+}
+
+function renderLastCheckedCell(account: CodexKeeperAccount) {
+  const text = formatDateTime(account.last_checked_at)
+  return h(
+    'span',
+    {
+      class: ['account-table-value-pill', 'is-time', text === '-' ? 'is-empty' : ''],
+      title: text,
+    },
+    text,
+  )
+}
+
+function renderLatestActionCell(account: CodexKeeperAccount) {
+  const text = latestActionText(account)
+  return h(
+    'span',
+    {
+      class: ['account-table-value-pill', 'is-action', text === '-' ? 'is-empty' : ''],
+      title: text === '-' ? undefined : text,
+    },
+    text,
   )
 }
 
@@ -1184,30 +1281,23 @@ async function runAccountAction(
 }
 
 const baseColumns: DataTableColumns<CodexKeeperAccount> = [
-  { title: '账号', key: 'name', width: 300, ellipsis: { tooltip: true } },
-  { title: '邮箱', key: 'email', width: 260, ellipsis: { tooltip: true } },
+  {
+    title: '账号',
+    key: 'identity',
+    width: 360,
+    render: (row) => renderAccountIdentityCell(row),
+  },
   {
     title: '类型',
     key: 'account_type',
-    width: 90,
-    render: (row) => row.account_type ?? '未知',
-  },
-  {
-    title: '状态',
-    key: 'disabled',
-    width: 90,
-    render: (row) =>
-      h(
-        NTag,
-        { size: 'small', bordered: false, type: row.disabled ? 'warning' : 'success' },
-        { default: () => (row.disabled ? '已禁用' : '启用中') },
-      ),
+    width: 96,
+    render: (row) => renderAccountTypeCell(row),
   },
   {
     title: '优先级',
     key: 'priority',
     width: 88,
-    render: (row) => formatInteger(accountPriority(row)),
+    render: (row) => renderAccountPriorityCell(row),
   },
   {
     title: '额度窗口',
@@ -1219,19 +1309,19 @@ const baseColumns: DataTableColumns<CodexKeeperAccount> = [
     title: '最近巡检',
     key: 'last_checked_at',
     width: 150,
-    render: (row) => formatDateTime(row.last_checked_at),
+    render: (row) => renderLastCheckedCell(row),
   },
   {
     title: '最近操作',
     key: 'latest_action',
     width: 340,
-    ellipsis: { tooltip: true },
-    render: (row) => {
-      const text = latestActionText(row)
-      return text === '-' ? '-' : h('span', { class: 'latest-action-text', title: text }, text)
-    },
+    render: (row) => renderLatestActionCell(row),
   },
 ]
+
+const disabledBaseColumns: DataTableColumns<CodexKeeperAccount> = baseColumns.filter(
+  (column) => !('key' in column) || column.key !== 'quota',
+)
 
 const disabledActionColumn: DataTableColumns<CodexKeeperAccount>[number] = {
   title: '',
@@ -1353,7 +1443,7 @@ const disabledColumns = computed<DataTableColumns<CodexKeeperAccount>>(() => [
     width: 44,
     disabled: (row: CodexKeeperAccount) => isRowActing(row) || isBulkDeleting.value,
   },
-  ...baseColumns,
+  ...disabledBaseColumns,
   disabledActionColumn,
 ])
 
@@ -1706,12 +1796,21 @@ onBeforeUnmount(() => {
                   <span class="account-card-email">{{ account.email ?? account.name }}</span>
                   <span class="account-card-name">{{ account.name }}</span>
                 </div>
-                <span
-                  class="account-status-pill"
-                  :class="account.disabled ? 'is-warning' : 'is-success'"
-                >
-                  {{ account.disabled ? '已禁用' : '启用中' }}
-                </span>
+                <div class="account-card-status-group">
+                  <span
+                    class="account-status-pill"
+                    :class="account.disabled ? 'is-warning' : 'is-success'"
+                  >
+                    {{ account.disabled ? '已禁用' : '启用中' }}
+                  </span>
+                  <span
+                    v-if="disabledStatusCodeText(account)"
+                    class="account-status-code-badge"
+                    :title="disabledStatusCodeTitle(account) ?? undefined"
+                  >
+                    {{ disabledStatusCodeText(account) }}
+                  </span>
+                </div>
               </div>
               <div class="account-card-meta-grid">
                 <div class="account-card-meta-item">
@@ -1727,7 +1826,15 @@ onBeforeUnmount(() => {
                   <strong>{{ formatDateTime(account.last_checked_at) }}</strong>
                 </div>
               </div>
-              <div class="account-card-quota">
+              <div
+                v-if="account.disabled"
+                class="account-card-error"
+                :title="disabledCardErrorText(account)"
+              >
+                <span>报错信息</span>
+                <strong>{{ disabledCardErrorText(account) }}</strong>
+              </div>
+              <div v-else-if="shouldShowQuotaWindow(account)" class="account-card-quota">
                 <template v-if="quotaWindowItems(account).length > 0">
                   <template v-if="isBarCardView">
                     <div
@@ -1820,7 +1927,9 @@ onBeforeUnmount(() => {
           <NDescriptionsItem label="类型默认优先级">
             {{ defaultPriority(selectedAccount) ?? '-' }}
           </NDescriptionsItem>
-          <NDescriptionsItem label="额度窗口">{{ quotaText(selectedAccount) }}</NDescriptionsItem>
+          <NDescriptionsItem v-if="shouldShowQuotaWindow(selectedAccount)" label="额度窗口">
+            {{ quotaText(selectedAccount) }}
+          </NDescriptionsItem>
           <NDescriptionsItem label="状态码">
             {{ selectedAccount.last_status_code ?? '-' }}
           </NDescriptionsItem>
@@ -2308,6 +2417,16 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.account-card-status-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
 .account-status-pill {
   flex-shrink: 0;
   padding: 2px 8px;
@@ -2328,6 +2447,24 @@ onBeforeUnmount(() => {
   color: var(--cpa-warning);
   background: var(--cpa-warning-weak);
   border-color: color-mix(in srgb, var(--cpa-warning) 28%, transparent);
+}
+
+.account-status-code-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 1px 6px;
+  overflow: hidden;
+  color: var(--cpa-danger);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--cpa-danger-weak);
+  border: 1px solid color-mix(in srgb, var(--cpa-danger) 28%, transparent);
+  border-radius: var(--cpa-radius-sm);
+  font-variant-numeric: tabular-nums;
 }
 
 .account-card-meta-grid {
@@ -2362,6 +2499,38 @@ onBeforeUnmount(() => {
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.account-card-error {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--cpa-danger) 7%, var(--cpa-surface-muted));
+  border: 1px solid color-mix(in srgb, var(--cpa-danger) 24%, var(--cpa-border));
+  border-radius: var(--cpa-radius-sm);
+}
+
+.account-card-error span {
+  overflow: hidden;
+  color: var(--cpa-danger);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-card-error strong {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cpa-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .account-card-quota {
@@ -2638,13 +2807,129 @@ onBeforeUnmount(() => {
   background: var(--cpa-danger);
 }
 
-:global(.latest-action-text) {
+:global(.account-table-identity) {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+:global(.account-table-email),
+:global(.account-table-name) {
   display: block;
   min-width: 0;
   overflow: hidden;
-  color: var(--cpa-text);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+:global(.account-table-email) {
+  color: var(--cpa-text-strong);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+:global(.account-table-name) {
+  color: var(--cpa-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+:global(.account-table-meta) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+:global(.account-table-chip) {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  padding: 1px 6px;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  border-radius: var(--cpa-radius-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+:global(.account-table-chip.is-type) {
+  color: var(--cpa-text);
+  font-size: 12px;
+  font-weight: 750;
+  background: var(--cpa-surface-muted);
+  border-color: color-mix(in srgb, var(--cpa-border) 72%, transparent);
+}
+
+:global(.account-table-chip.is-success) {
+  color: var(--cpa-success);
+  background: var(--cpa-success-weak);
+  border-color: color-mix(in srgb, var(--cpa-success) 26%, transparent);
+}
+
+:global(.account-table-chip.is-warning) {
+  color: var(--cpa-warning);
+  background: var(--cpa-warning-weak);
+  border-color: color-mix(in srgb, var(--cpa-warning) 26%, transparent);
+}
+
+:global(.account-table-chip.is-priority) {
+  color: var(--cpa-primary);
+  background: color-mix(in srgb, var(--cpa-primary) 9%, var(--cpa-surface-muted));
+  border-color: color-mix(in srgb, var(--cpa-primary) 24%, transparent);
+}
+
+:global(.account-table-value-pill) {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  padding: 3px 8px;
+  overflow: hidden;
+  color: var(--cpa-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--cpa-border);
+  border-radius: var(--cpa-radius-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+:global(.account-table-value-pill.is-time) {
+  color: var(--cpa-primary);
+  background: color-mix(in srgb, var(--cpa-primary) 8%, var(--cpa-surface-muted));
+  border-color: color-mix(in srgb, var(--cpa-primary) 22%, transparent);
+}
+
+:global(.account-table-value-pill.is-action) {
+  display: -webkit-box;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  background: color-mix(in srgb, var(--cpa-text-muted) 8%, var(--cpa-surface-muted));
+  border-color: color-mix(in srgb, var(--cpa-border) 78%, transparent);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  word-break: break-word;
+}
+
+:global(.account-table-value-pill.is-action.is-empty) {
+  display: inline-flex;
+  white-space: nowrap;
+}
+
+:global(.account-table-value-pill.is-empty) {
+  color: var(--cpa-text-muted);
+  font-weight: 700;
 }
 
 :global(.account-actions) {
@@ -2766,6 +3051,10 @@ onBeforeUnmount(() => {
   .account-card-top {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .account-card-status-group {
+    justify-content: flex-start;
   }
 
   .account-card-meta-grid {
