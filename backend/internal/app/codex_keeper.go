@@ -963,6 +963,7 @@ func (a *App) processKeeperAuth(ctx context.Context, cfg AppConfig, authInfo map
 	result.AccountType = accountTypeFromKeeperDetail(merged, nil)
 	if disabled {
 		result.Result = "disabled"
+		a.preserveKeeperBadCredentialDiagnosis(ctx, &result)
 		_ = a.upsertKeeperState(ctx, result)
 		return result
 	}
@@ -1728,6 +1729,23 @@ func isBadKeeperCredential(result keeperHTTPResult) bool {
 		text += " " + strings.ToLower(string(payload))
 	}
 	return strings.Contains(text, "workspace") && (strings.Contains(text, "disabled") || strings.Contains(text, "deactivated"))
+}
+
+func (a *App) preserveKeeperBadCredentialDiagnosis(ctx context.Context, result *keeperAccountResult) {
+	state, err := a.getKeeperState(ctx, result.Name)
+	if err != nil || !isKeeperBadCredentialDisableAction(state.LatestAction) {
+		return
+	}
+	result.LastStatusCode = state.LastStatusCode
+	result.LastError = cloneStringPtr(state.LastError)
+	result.LatestAction = cloneStringPtr(state.LatestAction)
+}
+
+func isKeeperBadCredentialDisableAction(action *string) bool {
+	if action == nil {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(*action), "禁用凭证")
 }
 
 func keeperBodyJSON(value any) map[string]any {

@@ -227,7 +227,10 @@ const accountListViewLabel = computed(() => {
   }
   return '表格'
 })
-const sortedCardAccounts = computed(() => sortAccountsForDisplay(filteredAccounts.value))
+const sortedCardAccounts = computed(() => [
+  ...filteredDisabledAccounts.value,
+  ...filteredNormalAccounts.value,
+])
 const isDisplayAllAccounts = computed(() => accountDisplaySize.value === 'all')
 const disabledTableDisplayProps = computed(() =>
   accountTableDisplayProps(visibleDisabledAccounts.value.length),
@@ -247,6 +250,7 @@ const visibleNormalAccounts = computed(() =>
 const visibleCardAccounts = computed(() =>
   sortedCardAccounts.value.slice(0, displayLimit.value),
 )
+const showCardLoadingState = computed(() => isLoading.value && accounts.value.length === 0)
 const displaySizeHelpText = computed(() =>
   isTableView.value
     ? isDisplayAllAccounts.value
@@ -1668,7 +1672,7 @@ onBeforeUnmount(() => {
               </p>
             </div>
           </div>
-          <div v-if="isLoading" class="empty-state">账号加载中...</div>
+          <div v-if="showCardLoadingState" class="empty-state">账号加载中...</div>
           <div v-else-if="visibleCardAccounts.length === 0" class="empty-state">
             当前筛选下暂无账号
           </div>

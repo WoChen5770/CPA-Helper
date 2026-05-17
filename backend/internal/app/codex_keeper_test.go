@@ -677,6 +677,172 @@ func TestKeeperRefreshAccountsUpdatesStateWithoutRemoteMutation(t *testing.T) {
 	}
 }
 
+func TestKeeperRunPreservesBadCredentialDiagnosisAfterRemoteDisabled(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("CPA_HELPER_DATA_DIR", dataDir)
+
+	const authName = "bad-token.json"
+	authDetails := map[string]map[string]any{
+		authName: {
+			"name":         authName,
+			"type":         "codex",
+			"email":        "bad@example.com",
+			"account_type": "free",
+			"disabled":     false,
+			"priority":     4,
+			"access_token": "bad-token",
+			"auth_index":   authName,
+		},
+	}
+	var mu sync.Mutex
+	usageCalls := 0
+	statusPatchCount := 0
+	priorityPatchCount := 0
+
+	cpa := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"files": []map[string]any{{"name": authName, "type": "codex"}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files/download":
+			name := r.URL.Query().Get("name")
+			mu.Lock()
+			detail, ok := authDetails[name]
+			if !ok {
+				mu.Unlock()
+				http.NotFound(w, r)
+				return
+			}
+			copied := map[string]any{}
+			for key, value := range detail {
+				copied[key] = value
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(copied)
+		case r.Method == http.MethodPost && r.URL.Path == "/v0/management/api-call":
+			mu.Lock()
+			usageCalls++
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status_code": 401,
+				"body": map[string]any{
+					"error": map[string]any{
+						"message": "Your authentication token has been invalidated.",
+						"code":    "token_invalidated",
+					},
+					"status": 401,
+				},
+			})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v0/management/auth-files/status":
+			var payload struct {
+				Name     string `json:"name"`
+				Disabled bool   `json:"disabled"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			statusPatchCount++
+			if detail, ok := authDetails[payload.Name]; ok {
+				detail["disabled"] = payload.Disabled
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v0/management/auth-files/fields":
+			var payload struct {
+				Name     string `json:"name"`
+				Priority *int   `json:"priority"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			priorityPatchCount++
+			if detail, ok := authDetails[payload.Name]; ok {
+				if payload.Priority == nil {
+					delete(detail, "priority")
+				} else {
+					detail["priority"] = *payload.Priority
+				}
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer cpa.Close()
+
+	app, err := backendApp.New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+
+	handler := app.Routes()
+	cookies := requestJSON(t, handler, http.MethodPost, "/api/auth/setup", map[string]any{
+		"username": "admin",
+		"password": "test-password",
+		"nickname": "Admin",
+	}, nil, nil)
+	requestJSON(t, handler, http.MethodPut, "/api/settings", map[string]any{
+		"cliaproxy_url":     cpa.URL,
+		"management_key":    "test-management-key",
+		"collector_enabled": false,
+	}, cookies, nil)
+	requestJSON(t, handler, http.MethodPut, "/api/codex-keeper/settings", map[string]any{
+		"schedule_cron":       "0 0 29 2 *",
+		"dry_run":             false,
+		"worker_threads":      1,
+		"cpa_timeout_seconds": 1,
+	}, cookies, nil)
+
+	requestJSON(t, handler, http.MethodPost, "/api/codex-keeper/run-once", nil, cookies, nil)
+	response := waitForKeeperAccounts(t, handler, cookies, 1)
+	item := response.Items[0]
+	if !item.Disabled {
+		t.Fatal("bad-token disabled = false, want Keeper to disable bad credential")
+	}
+	if item.LastStatusCode == nil || *item.LastStatusCode != 401 {
+		t.Fatalf("bad-token first last_status_code = %v, want 401", item.LastStatusCode)
+	}
+	if item.LastError == nil || !strings.Contains(*item.LastError, "凭证不可用") {
+		t.Fatalf("bad-token first last_error = %v, want credential error", item.LastError)
+	}
+	if item.LatestAction == nil || !strings.Contains(*item.LatestAction, "禁用凭证") {
+		t.Fatalf("bad-token first latest_action = %v, want keeper disable action", item.LatestAction)
+	}
+
+	requestJSON(t, handler, http.MethodPost, "/api/codex-keeper/run-once", nil, cookies, nil)
+	response = waitForKeeperAccounts(t, handler, cookies, 1)
+	item = response.Items[0]
+	if item.LastStatusCode == nil || *item.LastStatusCode != 401 {
+		t.Fatalf("bad-token second last_status_code = %v, want preserved 401", item.LastStatusCode)
+	}
+	if item.LastError == nil || !strings.Contains(*item.LastError, "凭证不可用") {
+		t.Fatalf("bad-token second last_error = %v, want preserved credential error", item.LastError)
+	}
+	if item.LatestAction == nil || !strings.Contains(*item.LatestAction, "禁用凭证") {
+		t.Fatalf("bad-token second latest_action = %v, want preserved keeper disable action", item.LatestAction)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if usageCalls != 1 {
+		t.Fatalf("usage calls = %d, want 1 because disabled account skips later usage inspection", usageCalls)
+	}
+	if statusPatchCount != 1 {
+		t.Fatalf("status patch count = %d, want 1", statusPatchCount)
+	}
+	if priorityPatchCount != 1 {
+		t.Fatalf("priority patch count = %d, want 1", priorityPatchCount)
+	}
+}
+
 func TestKeeperAccountsReturnBeijingOffsetTimeStrings(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("CPA_HELPER_DATA_DIR", dataDir)
