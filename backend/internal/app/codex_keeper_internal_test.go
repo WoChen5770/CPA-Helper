@@ -475,6 +475,13 @@ func TestAutomaticKeeperRunsRespectCacheButManualRefreshBypasses(t *testing.T) {
 		cfg.CodexKeeper.AccountRefreshCacheMinutes = 10
 	})
 	insertKeeperStateForCandidate(t, app, "cached.json", nil, timePtrValue(time.Now().In(appTimeLocation).Add(-time.Minute)))
+	if _, err := app.db.Exec(`
+		UPDATE codex_keeper_auth_states
+		SET last_healthy_at = ?
+		WHERE auth_name = ?
+	`, dbTime(time.Now().In(appTimeLocation).Add(-time.Minute)), "cached.json"); err != nil {
+		t.Fatalf("mark cached healthy state: %v", err)
+	}
 
 	stats, _, err := app.executeKeeperRunForAccounts(context.Background(), "daemon", nil, func(string) {})
 	if err != nil {
@@ -482,6 +489,9 @@ func TestAutomaticKeeperRunsRespectCacheButManualRefreshBypasses(t *testing.T) {
 	}
 	if stats.Skipped != 1 {
 		t.Fatalf("daemon skipped = %d, want 1", stats.Skipped)
+	}
+	if stats.Healthy != 1 {
+		t.Fatalf("daemon healthy = %d, want cached healthy state to count", stats.Healthy)
 	}
 	if usageCalls != 0 {
 		t.Fatalf("daemon usage calls = %d, want 0", usageCalls)
@@ -499,6 +509,62 @@ func TestAutomaticKeeperRunsRespectCacheButManualRefreshBypasses(t *testing.T) {
 	}
 	if got := countKeeperRows(t, app, `SELECT COUNT(*) FROM codex_keeper_run_accounts`); got != 0 {
 		t.Fatalf("keeper run account rows = %d, want 0 because skipped daemon and manual refresh are not persisted", got)
+	}
+}
+
+func TestAutomaticKeeperRunCountsCachedBadCredentialState(t *testing.T) {
+	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
+
+	downloadCalls := 0
+	cpa := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"files": []map[string]any{{"name": "cached-bad.json", "type": "codex"}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files/download":
+			downloadCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer cpa.Close()
+
+	app, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+	configureKeeperTestCPA(t, app, cpa.URL, func(cfg *AppConfig) {
+		cfg.CodexKeeper.AccountRefreshCacheMinutes = 10
+	})
+	checkedAt := time.Now().In(appTimeLocation).Add(-time.Minute)
+	insertKeeperStateForCandidate(t, app, "cached-bad.json", nil, timePtrValue(checkedAt))
+	if _, err := app.db.Exec(`
+		UPDATE codex_keeper_auth_states
+		SET disabled = 1, last_status_code = 401, last_error = ?, latest_action = ?
+		WHERE auth_name = ?
+	`, "凭证不可用：HTTP 401", "禁用凭证：凭证不可用：HTTP 401", "cached-bad.json"); err != nil {
+		t.Fatalf("mark cached bad credential state: %v", err)
+	}
+
+	stats, _, err := app.executeKeeperRunForAccounts(context.Background(), "daemon", nil, func(string) {})
+	if err != nil {
+		t.Fatalf("daemon run: %v", err)
+	}
+	if stats.Skipped != 1 {
+		t.Fatalf("daemon skipped = %d, want 1", stats.Skipped)
+	}
+	if stats.StatusDisabled != 1 {
+		t.Fatalf("daemon status_disabled = %d, want cached bad credential to count", stats.StatusDisabled)
+	}
+	if stats.Healthy != 0 {
+		t.Fatalf("daemon healthy = %d, want 0", stats.Healthy)
+	}
+	if downloadCalls != 0 {
+		t.Fatalf("download calls = %d, want 0", downloadCalls)
 	}
 }
 

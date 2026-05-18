@@ -4,7 +4,10 @@ import { NEmpty, NSpin } from 'naive-ui'
 import * as echarts from 'echarts/core'
 import { BarChart, LineChart, PieChart } from 'echarts/charts'
 import {
+  AxisPointerComponent,
+  DatasetComponent,
   GridComponent,
+  GridSimpleComponent,
   LegendComponent,
   TooltipComponent,
   type GridComponentOption,
@@ -17,7 +20,18 @@ import type { ComposeOption, ECharts } from 'echarts/core'
 
 import { useThemePreference } from '@/shared/composables/useThemePreference'
 
-echarts.use([BarChart, LineChart, PieChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
+echarts.use([
+  BarChart,
+  LineChart,
+  PieChart,
+  AxisPointerComponent,
+  DatasetComponent,
+  GridComponent,
+  GridSimpleComponent,
+  LegendComponent,
+  TooltipComponent,
+  CanvasRenderer,
+])
 
 export type ChartOption = ComposeOption<
   | BarSeriesOption
@@ -33,6 +47,7 @@ const props = defineProps<{
   option: ChartOption
   empty: boolean
   loading?: boolean
+  compactFooter?: boolean
 }>()
 
 const chartEl = ref<HTMLDivElement | null>(null)
@@ -126,7 +141,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="panel chart-panel">
+  <section
+    class="panel chart-panel"
+    :class="{ 'has-chart-footer': $slots.default, 'has-compact-footer': props.compactFooter }"
+  >
     <div class="chart-heading">
       <h2>{{ title }}</h2>
       <span class="chart-more" aria-hidden="true">...</span>
@@ -138,6 +156,9 @@ onBeforeUnmount(() => {
           <NEmpty description="暂无数据" />
         </div>
       </div>
+      <div v-if="$slots.default" class="chart-footer">
+        <slot />
+      </div>
     </NSpin>
   </section>
 </template>
@@ -145,6 +166,14 @@ onBeforeUnmount(() => {
 <style scoped>
 .chart-panel {
   min-height: 270px;
+}
+
+.chart-panel.has-chart-footer {
+  min-height: 318px;
+}
+
+.chart-panel.has-chart-footer.has-compact-footer {
+  min-height: 278px;
 }
 
 .chart-heading {
@@ -177,6 +206,12 @@ h2 {
   height: 222px;
 }
 
+.chart-panel.has-chart-footer .chart-body,
+.chart-panel.has-chart-footer .chart-surface,
+.chart-panel.has-chart-footer .chart-empty {
+  height: 160px;
+}
+
 .chart-body {
   position: relative;
   background: transparent;
@@ -191,5 +226,9 @@ h2 {
   position: absolute;
   inset: 0;
   place-items: center;
+}
+
+.chart-footer {
+  padding: 0 18px 16px;
 }
 </style>

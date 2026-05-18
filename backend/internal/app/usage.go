@@ -898,6 +898,7 @@ func rankingItem(key, label string, records, failed, tokens int, cost float64, u
 func distributionsFromRecords(records []UsageRecord, prices map[[2]string]ModelPrice) map[string]any {
 	return map[string]any{
 		"providers": distributionItems(records, prices, func(record UsageRecord) string { return valueOr(record.Provider, "unknown") }),
+		"models":    distributionItems(records, prices, func(record UsageRecord) string { return valueOr(record.Model, "unknown") }),
 		"endpoints": distributionItems(records, prices, func(record UsageRecord) string { return valueOr(record.Endpoint, "unknown") }),
 	}
 }

@@ -257,6 +257,7 @@ export interface DistributionItem {
 
 export interface UsageDistributionsResponse {
   providers: DistributionItem[]
+  models: DistributionItem[]
   endpoints: DistributionItem[]
 }
 

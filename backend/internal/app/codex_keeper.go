@@ -1602,15 +1602,21 @@ func (a *App) executeKeeperRunWithOptions(ctx context.Context, options keeperRun
 	}
 	stats.Total = len(filtered)
 	if options.UseRefreshCache {
-		var skipped int
-		filtered, skipped, err = a.filterKeeperCachedAuthItems(ctx, filtered, cfg)
+		var skippedNames []string
+		filtered, skippedNames, err = a.filterKeeperCachedAuthItems(ctx, filtered, cfg)
 		if err != nil {
 			if runID > 0 {
 				_ = a.finishKeeperRun(ctx, runID, "failed", err.Error(), stats)
 			}
 			return stats, "", err
 		}
-		stats.Skipped += skipped
+		stats.Skipped += len(skippedNames)
+		if err := a.addKeeperCachedAuthStats(ctx, &stats, skippedNames); err != nil {
+			if runID > 0 {
+				_ = a.finishKeeperRun(ctx, runID, "failed", err.Error(), stats)
+			}
+			return stats, "", err
+		}
 	}
 	if len(filtered) == 0 {
 		if stats.Total > 0 && options.UseRefreshCache {
@@ -1655,6 +1661,12 @@ func (a *App) executeKeeperRunWithOptions(ctx context.Context, options keeperRun
 			if cached {
 				unlock()
 				stats.Skipped++
+				if err := a.addKeeperCachedAuthStats(ctx, &stats, []string{name}); err != nil {
+					if runID > 0 {
+						_ = a.finishKeeperRun(ctx, runID, "failed", err.Error(), stats)
+					}
+					return stats, "", err
+				}
 				logFn(name + ": 缓存时间内已刷新，跳过")
 				continue
 			}
@@ -1964,9 +1976,9 @@ func keeperAuthAliasKey(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
 
-func (a *App) filterKeeperCachedAuthItems(ctx context.Context, items []map[string]any, cfg AppConfig) ([]map[string]any, int, error) {
+func (a *App) filterKeeperCachedAuthItems(ctx context.Context, items []map[string]any, cfg AppConfig) ([]map[string]any, []string, error) {
 	if len(items) == 0 {
-		return items, 0, nil
+		return items, nil, nil
 	}
 	names := make([]string, 0, len(items))
 	for _, item := range items {
@@ -1974,9 +1986,9 @@ func (a *App) filterKeeperCachedAuthItems(ctx context.Context, items []map[strin
 			names = append(names, name)
 		}
 	}
-	allowedNames, skipped, err := a.filterKeeperCachedAuthNames(ctx, names, cfg)
+	allowedNames, skippedNames, err := a.filterKeeperCachedAuthNames(ctx, names, cfg)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 	allowed := map[string]bool{}
 	for _, name := range allowedNames {
@@ -1989,32 +2001,61 @@ func (a *App) filterKeeperCachedAuthItems(ctx context.Context, items []map[strin
 			filtered = append(filtered, item)
 		}
 	}
-	return filtered, skipped, nil
+	return filtered, skippedNames, nil
 }
 
-func (a *App) filterKeeperCachedAuthNames(ctx context.Context, names []string, cfg AppConfig) ([]string, int, error) {
+func (a *App) filterKeeperCachedAuthNames(ctx context.Context, names []string, cfg AppConfig) ([]string, []string, error) {
 	normalized, err := normalizeOptionalKeeperAuthNames(names)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 	if len(normalized) == 0 {
-		return normalized, 0, nil
+		return normalized, nil, nil
 	}
 	cutoff := time.Now().In(appTimeLocation).Add(-keeperRefreshCacheDuration(cfg))
 	filtered := make([]string, 0, len(normalized))
-	skipped := 0
+	skipped := []string{}
 	for _, name := range normalized {
 		cached, err := a.keeperAuthCheckedSince(ctx, name, cutoff)
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, err
 		}
 		if cached {
-			skipped++
+			skipped = append(skipped, name)
 			continue
 		}
 		filtered = append(filtered, name)
 	}
 	return filtered, skipped, nil
+}
+
+func (a *App) addKeeperCachedAuthStats(ctx context.Context, stats *keeperStats, names []string) error {
+	cachedStats, err := a.keeperCachedAuthStats(ctx, names)
+	if err != nil {
+		return err
+	}
+	stats.add(cachedStats)
+	return nil
+}
+
+func (a *App) keeperCachedAuthStats(ctx context.Context, names []string) (keeperStats, error) {
+	normalized, err := normalizeOptionalKeeperAuthNames(names)
+	if err != nil {
+		return keeperStats{}, err
+	}
+	stats := keeperStats{}
+	for _, name := range normalized {
+		state, err := a.getKeeperState(ctx, name)
+		if err != nil {
+			var appErr *AppError
+			if errors.As(err, &appErr) && appErr.Code == "not_found" {
+				continue
+			}
+			return keeperStats{}, err
+		}
+		stats.mergeCachedState(*state)
+	}
+	return stats, nil
 }
 
 func (a *App) keeperAuthCheckedSince(ctx context.Context, name string, cutoff time.Time) (bool, error) {
@@ -2326,6 +2367,55 @@ func (a *App) mergeKeeperStats(stats *keeperStats, result keeperAccountResult) {
 	default:
 		stats.Skipped++
 	}
+}
+
+func (stats *keeperStats) add(delta keeperStats) {
+	stats.Total += delta.Total
+	stats.Healthy += delta.Healthy
+	stats.StatusDisabled += delta.StatusDisabled
+	stats.StatusEnabled += delta.StatusEnabled
+	stats.PriorityDegraded += delta.PriorityDegraded
+	stats.PriorityRestored += delta.PriorityRestored
+	stats.Skipped += delta.Skipped
+	stats.NetworkError += delta.NetworkError
+}
+
+func (stats *keeperStats) mergeCachedState(state keeperAuthState) {
+	if isKeeperCachedBadCredentialState(state) {
+		stats.StatusDisabled++
+		return
+	}
+	if state.Disabled {
+		return
+	}
+	if state.LastError != nil && strings.TrimSpace(*state.LastError) != "" {
+		stats.NetworkError++
+		return
+	}
+	if state.Priority != nil && *state.Priority == -1 {
+		stats.PriorityDegraded++
+		return
+	}
+	if state.LastHealthyAt != nil {
+		stats.Healthy++
+	}
+}
+
+func isKeeperCachedBadCredentialState(state keeperAuthState) bool {
+	if isKeeperBadCredentialDisableAction(state.LatestAction) {
+		return true
+	}
+	if state.LastStatusCode != nil && (*state.LastStatusCode == http.StatusUnauthorized || *state.LastStatusCode == http.StatusPaymentRequired) {
+		return true
+	}
+	if state.LatestAction != nil && strings.HasPrefix(strings.TrimSpace(*state.LatestAction), "模拟禁用") {
+		return true
+	}
+	if state.LastError == nil {
+		return false
+	}
+	message := strings.TrimSpace(*state.LastError)
+	return strings.Contains(message, "缺少 access token") || strings.Contains(message, "凭证不可用")
 }
 
 func (a *App) listKeeperRemoteAuthFiles(ctx context.Context, cfg AppConfig) ([]map[string]any, error) {

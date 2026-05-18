@@ -64,6 +64,22 @@ interface MetricCardConfig {
   tone: string
 }
 
+interface DistributionLegendItem {
+  key: string
+  label: string
+  recordsText: string
+  percentText: string
+  colorIndex: number
+}
+
+const DISTRIBUTION_CHART_COLORS = [
+  { token: '--cpa-chart-1', fallback: '#009aa8' },
+  { token: '--cpa-chart-2', fallback: '#1d8dff' },
+  { token: '--cpa-chart-3', fallback: '#7e66f2' },
+  { token: '--cpa-chart-4', fallback: '#f58a2f' },
+  { token: '--cpa-chart-5', fallback: '#18a058' },
+] as const
+
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
@@ -76,7 +92,7 @@ const summary = ref<UsageSummary | null>(null)
 const trends = ref<TrendPoint[]>([])
 const userRanking = ref<RankingItem[]>([])
 const modelRanking = ref<RankingItem[]>([])
-const distributions = ref<UsageDistributionsResponse>({ providers: [], endpoints: [] })
+const distributions = ref<UsageDistributionsResponse>({ providers: [], models: [], endpoints: [] })
 const options = ref<UsageOptionsResponse>({
   users: [],
   api_key_descriptions: [],
@@ -92,6 +108,16 @@ function normalizeUsageOptions(nextOptions: UsageOptionsResponse): UsageOptionsR
     providers: nextOptions.providers ?? [],
     models: nextOptions.models ?? [],
     endpoints: nextOptions.endpoints ?? [],
+  }
+}
+
+function normalizeUsageDistributions(
+  nextDistributions: Partial<UsageDistributionsResponse> | undefined,
+): UsageDistributionsResponse {
+  return {
+    providers: nextDistributions?.providers ?? [],
+    models: nextDistributions?.models ?? [],
+    endpoints: nextDistributions?.endpoints ?? [],
   }
 }
 
@@ -377,7 +403,7 @@ async function refresh({ silent = false }: RefreshOptions = {}) {
       ? descriptionRanking(overview).items
       : (overview.user_ranking ?? emptyRanking('user')).items
     modelRanking.value = (overview.model_ranking ?? emptyRanking('model')).items
-    distributions.value = overview.distributions
+    distributions.value = normalizeUsageDistributions(overview.distributions)
     options.value = normalizeUsageOptions(overview.options)
     void router.replace({
       query: filtersToQuery(
@@ -419,6 +445,35 @@ function goRecords(extra: UsageFilters = {}) {
 
 function cssVar(name: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+function distributionChartColors(): string[] {
+  return DISTRIBUTION_CHART_COLORS.map((color) => cssVar(color.token, color.fallback))
+}
+
+function distributionMarkerStyle(index: number): Record<string, string> {
+  const color = DISTRIBUTION_CHART_COLORS[index % DISTRIBUTION_CHART_COLORS.length]
+  if (!color) {
+    return {
+      '--distribution-color': '#009aa8',
+    }
+  }
+
+  return {
+    '--distribution-color': `var(${color.token}, ${color.fallback})`,
+  }
+}
+
+function distributionLegendItems(items: DistributionItem[]): DistributionLegendItem[] {
+  const totalRecords = items.reduce((sum, item) => sum + item.records, 0)
+
+  return items.map((item, index) => ({
+    key: item.key,
+    label: item.label,
+    recordsText: formatCompact(item.records),
+    percentText: totalRecords > 0 ? `${Math.round((item.records / totalRecords) * 100)}%` : '0%',
+    colorIndex: index,
+  }))
 }
 
 const metricCards = computed<MetricCardConfig[]>(() => [
@@ -501,36 +556,75 @@ const trendOption = computed<ChartOption>(() => ({
 }))
 
 function pieOption(items: DistributionItem[], name: string): ChartOption {
+  const totalRecords = items.reduce((sum, item) => sum + item.records, 0)
+  const surfaceColor = cssVar('--cpa-surface', '#ffffff')
+  const textColor = cssVar('--cpa-text-strong', '#172026')
+  const mutedColor = cssVar('--cpa-text-muted', '#667981')
+
   return {
-    tooltip: { trigger: 'item' },
-    color: [
-      cssVar('--cpa-chart-1', '#009aa8'),
-      cssVar('--cpa-chart-2', '#1d8dff'),
-      cssVar('--cpa-chart-3', '#7e66f2'),
-      cssVar('--cpa-chart-4', '#f58a2f'),
-      cssVar('--cpa-chart-5', '#18a058'),
-    ],
+    tooltip: {
+      trigger: 'item',
+      formatter: `${name}：{b}<br/>请求：{c} ({d}%)`,
+    },
+    color: distributionChartColors(),
     legend: {
-      orient: 'vertical',
-      right: 18,
-      top: 'middle',
-      type: 'scroll',
-      itemWidth: 12,
-      itemHeight: 12,
+      show: false,
     },
     series: [
       {
         name,
         type: 'pie',
-        radius: ['46%', '70%'],
-        center: ['38%', '52%'],
+        radius: ['48%', '73%'],
+        center: ['50%', '53%'],
+        startAngle: 92,
+        minAngle: 4,
+        avoidLabelOverlap: true,
         label: { show: false },
         labelLine: { show: false },
-        data: items.map((item) => ({ name: item.label, value: item.records })),
+        itemStyle: {
+          borderColor: surfaceColor,
+          borderWidth: 3,
+          borderRadius: 5,
+        },
+        emphasis: {
+          scaleSize: 3,
+          itemStyle: {
+            shadowBlur: 10,
+            shadowColor: 'rgba(0, 154, 168, 0.18)',
+          },
+        },
+        data: items.map((item, index) => ({
+          name: item.label,
+          value: item.records,
+          label:
+            index === 0
+              ? {
+                  show: true,
+                  position: 'center',
+                  formatter: `{total|${formatInteger(totalRecords)}}\n{caption|请求}`,
+                  rich: {
+                    total: {
+                      color: textColor,
+                      fontSize: 22,
+                      fontWeight: 750,
+                      lineHeight: 28,
+                    },
+                    caption: {
+                      color: mutedColor,
+                      fontSize: 12,
+                      lineHeight: 18,
+                    },
+                  },
+                }
+              : { show: false },
+        })),
       },
     ],
   }
 }
+
+const modelDistributionLegend = computed(() => distributionLegendItems(distributions.value.models))
+const endpointDistributionLegend = computed(() => distributionLegendItems(distributions.value.endpoints))
 
 const rankingColumns = computed<DataTableColumns<RankingItem>>(() => [
   {
@@ -759,11 +853,33 @@ onBeforeUnmount(() => {
         :loading="isLoading"
       />
       <ChartPanel
-        title="服务商分布"
-        :option="pieOption(distributions.providers, '服务商')"
-        :empty="distributions.providers.length === 0"
+        title="模型分布"
+        :option="pieOption(distributions.models, '模型')"
+        :empty="distributions.models.length === 0"
         :loading="isLoading"
-      />
+        :compact-footer="modelDistributionLegend.length === 1"
+      >
+        <ol
+          class="distribution-legend"
+          :class="{ 'is-single': modelDistributionLegend.length === 1 }"
+          aria-label="模型分布图例"
+        >
+          <li
+            v-for="item in modelDistributionLegend"
+            :key="item.key"
+            class="distribution-legend-item"
+          >
+            <span
+              class="distribution-marker"
+              :style="distributionMarkerStyle(item.colorIndex)"
+              aria-hidden="true"
+            />
+            <span class="distribution-label" :title="item.label">{{ item.label }}</span>
+            <span class="distribution-count">{{ item.recordsText }}</span>
+            <span class="distribution-percent">{{ item.percentText }}</span>
+          </li>
+        </ol>
+      </ChartPanel>
     </div>
 
     <div class="grid-two">
@@ -800,7 +916,29 @@ onBeforeUnmount(() => {
         :option="pieOption(distributions.endpoints, '接口')"
         :empty="distributions.endpoints.length === 0"
         :loading="isLoading"
-      />
+        :compact-footer="endpointDistributionLegend.length === 1"
+      >
+        <ol
+          class="distribution-legend"
+          :class="{ 'is-single': endpointDistributionLegend.length === 1 }"
+          aria-label="接口分布图例"
+        >
+          <li
+            v-for="item in endpointDistributionLegend"
+            :key="item.key"
+            class="distribution-legend-item"
+          >
+            <span
+              class="distribution-marker"
+              :style="distributionMarkerStyle(item.colorIndex)"
+              aria-hidden="true"
+            />
+            <span class="distribution-label" :title="item.label">{{ item.label }}</span>
+            <span class="distribution-count">{{ item.recordsText }}</span>
+            <span class="distribution-percent">{{ item.percentText }}</span>
+          </li>
+        </ol>
+      </ChartPanel>
     </div>
   </section>
 </template>
@@ -897,6 +1035,72 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   min-width: 0;
+}
+
+.distribution-legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px 10px;
+  max-height: 112px;
+  margin: 0;
+  overflow: auto;
+  padding: 0;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.distribution-legend.is-single {
+  grid-template-columns: minmax(0, 300px);
+  justify-content: center;
+  max-height: none;
+  overflow: visible;
+}
+
+.distribution-legend-item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--cpa-border) 68%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--cpa-surface-muted) 72%, transparent);
+}
+
+.distribution-marker {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  background: var(--distribution-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--distribution-color) 14%, transparent);
+}
+
+.distribution-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cpa-text);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.distribution-count {
+  color: var(--cpa-text-strong);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+  line-height: 18px;
+}
+
+.distribution-percent {
+  min-width: 36px;
+  color: var(--cpa-text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  text-align: right;
 }
 
 @media (max-width: 1180px) {

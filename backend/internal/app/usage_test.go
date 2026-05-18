@@ -33,6 +33,19 @@ type usageSummaryResponse struct {
 	End   string `json:"end"`
 }
 
+type usageOverviewDistributionsResponse struct {
+	Distributions struct {
+		Models []usageDistributionItem `json:"models"`
+	} `json:"distributions"`
+}
+
+type usageDistributionItem struct {
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Records     int    `json:"records"`
+	TotalTokens int    `json:"total_tokens"`
+}
+
 func TestUsageRecordsReturnBeijingOffsetTimes(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("CPA_HELPER_DATA_DIR", dataDir)
@@ -69,6 +82,39 @@ func TestUsageRecordsReturnBeijingOffsetTimes(t *testing.T) {
 	requestJSON(t, handler, http.MethodGet, summaryPath, nil, cookies, &summary)
 	if summary.Start != "2026-05-16T00:00:00+08:00" || summary.End != "2026-05-17T00:00:00+08:00" {
 		t.Fatalf("summary range = %q - %q, want Beijing offset range", summary.Start, summary.End)
+	}
+}
+
+func TestUsageOverviewIncludesModelDistribution(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("CPA_HELPER_DATA_DIR", dataDir)
+
+	app, err := backendApp.New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+
+	handler := app.Routes()
+	cookies := requestJSON(t, handler, http.MethodPost, "/api/auth/setup", map[string]any{
+		"username": "admin",
+		"password": "test-password",
+		"nickname": "Admin",
+	}, nil, nil)
+	seedUsageRecord(t, dataDir, "2026-05-16T16:37:00+08:00")
+
+	const overviewPath = "/api/usage/overview?scope=admin&start=2026-05-16T00:00:00&end=2026-05-17T00:00:00"
+	overview := usageOverviewDistributionsResponse{}
+	requestJSON(t, handler, http.MethodGet, overviewPath, nil, cookies, &overview)
+	if len(overview.Distributions.Models) != 1 {
+		t.Fatalf("model distribution count = %d, want 1", len(overview.Distributions.Models))
+	}
+	item := overview.Distributions.Models[0]
+	if item.Key != "gpt-5.5" || item.Label != "gpt-5.5" {
+		t.Fatalf("model distribution item = %#v, want gpt-5.5", item)
+	}
+	if item.Records != 1 || item.TotalTokens != 12 {
+		t.Fatalf("model distribution totals = records %d tokens %d, want 1 and 12", item.Records, item.TotalTokens)
 	}
 }
 
