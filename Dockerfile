@@ -15,8 +15,8 @@ RUN npm run build
 
 FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS backend-build
 
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /app/backend
 
@@ -27,7 +27,9 @@ RUN --mount=type=cache,id=cpa-helper-gomod,target=/go/pkg/mod,sharing=locked \
 COPY backend/ ./
 RUN --mount=type=cache,id=cpa-helper-gomod,target=/go/pkg/mod,sharing=locked \
     --mount=type=cache,id=cpa-helper-gobuild,target=/root/.cache/go-build,sharing=locked \
-    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    : "${TARGETOS:?TARGETOS is required}" && \
+    : "${TARGETARCH:?TARGETARCH is required}" && \
+    CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
     go build -trimpath -ldflags="-s -w" -o /out/cpa-helper ./cmd/cpa-helper
 
 
