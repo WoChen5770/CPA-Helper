@@ -190,7 +190,8 @@ func (a *App) listPrices(ctx context.Context) ([]ModelPrice, error) {
 		SELECT id, provider, model, input_usd_per_million, output_usd_per_million,
 		       cache_read_usd_per_million, cache_creation_usd_per_million, source,
 		       source_model, auto_synced, CAST(last_synced_at AS TEXT), CAST(updated_at AS TEXT)
-		FROM model_prices ORDER BY provider, model
+		FROM model_prices
+		ORDER BY auto_synced ASC, lower(provider), lower(model)
 	`)
 	if err != nil {
 		return nil, err

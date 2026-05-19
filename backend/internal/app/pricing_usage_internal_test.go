@@ -200,6 +200,42 @@ func TestSyncLiteLLMPricesReplacesLiteLLMSource(t *testing.T) {
 	}
 }
 
+func TestListPricesOrdersManualBeforeSynced(t *testing.T) {
+	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
+	app, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+
+	now := dbTime(time.Now().In(appTimeLocation))
+	if _, err := app.db.Exec(`
+		INSERT INTO model_prices (
+			provider, model, input_usd_per_million, output_usd_per_million,
+			cache_read_usd_per_million, cache_creation_usd_per_million, source,
+			auto_synced, updated_at
+		) VALUES
+			('aaa-synced', 'aaa-model', 1, 1, 0, 0, 'litellm', 1, ?),
+			('zzz-manual', 'zzz-model', 1, 1, 0, 0, 'manual', 0, ?)
+	`, now, now); err != nil {
+		t.Fatalf("seed prices: %v", err)
+	}
+
+	prices, err := app.listPrices(context.Background())
+	if err != nil {
+		t.Fatalf("listPrices failed: %v", err)
+	}
+	if len(prices) != 2 {
+		t.Fatalf("prices length = %d, want 2", len(prices))
+	}
+	if prices[0].AutoSynced || prices[0].Source != "manual" || prices[0].Model != "zzz-model" {
+		t.Fatalf("first price = %#v, want manual price first", prices[0])
+	}
+	if !prices[1].AutoSynced || prices[1].Source != "litellm" || prices[1].Model != "aaa-model" {
+		t.Fatalf("second price = %#v, want synced price second", prices[1])
+	}
+}
+
 func TestLiteLLMSyncUsesConfiguredHTTPProxy(t *testing.T) {
 	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
 	targetCalls := 0
