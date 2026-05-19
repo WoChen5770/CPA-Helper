@@ -59,10 +59,9 @@ const RECORDS_TABLE_COLUMN_WIDTHS = {
   failed: 68,
   latency: 110,
   inputTokens: 100,
-  outputTokens: 100,
-  outputTps: 110,
+  outputTokens: 145,
   reasoningTokens: 100,
-  cachedTokens: 100,
+  cachedTokens: 160,
   totalTokens: 120,
   estimatedCost: 110,
   provider: 120,
@@ -552,7 +551,7 @@ function formatLatency(value: number | null): string {
   return `${formatInteger(Math.round(value))} ms`
 }
 
-function formatOutputTps(row: UsageRecordListItem): string {
+function formatOutputTps(row: Pick<UsageRecordListItem, 'latency_ms' | 'output_tokens'>): string {
   if (row.latency_ms === null || row.latency_ms <= 0) {
     return '-'
   }
@@ -560,6 +559,55 @@ function formatOutputTps(row: UsageRecordListItem): string {
   return new Intl.NumberFormat('zh-CN', {
     maximumFractionDigits: tokensPerSecond < 10 ? 2 : 1,
   }).format(tokensPerSecond)
+}
+
+function formatOutputWithTps(row: Pick<UsageRecordListItem, 'latency_ms' | 'output_tokens'>): string {
+  const output = formatInteger(row.output_tokens)
+  const outputTps = formatOutputTps(row)
+  return outputTps === '-' ? output : `${output} (${outputTps} tps)`
+}
+
+function renderOutputWithTps(row: Pick<UsageRecordListItem, 'latency_ms' | 'output_tokens'>) {
+  const output = formatInteger(row.output_tokens)
+  const outputTps = formatOutputTps(row)
+  if (outputTps === '-') {
+    return output
+  }
+  return h(
+    'span',
+    {
+      class: 'output-with-tps',
+      style: { whiteSpace: 'nowrap' },
+    },
+    [
+      output,
+      h(
+        'span',
+        {
+          class: 'output-tps-muted',
+          style: {
+            color: 'var(--cpa-text-muted)',
+            fontSize: '11px',
+            fontWeight: '400',
+            lineHeight: '1',
+          },
+        },
+        ` (${outputTps} tps)`,
+      ),
+    ],
+  )
+}
+
+function isClaudeProvider(provider: string | null | undefined): boolean {
+  const normalized = provider?.trim().toLowerCase()
+  return normalized === 'claude' || normalized === 'anthropic'
+}
+
+function formatCacheTokens(row: UsageRecordListItem): string {
+  if (isClaudeProvider(row.provider)) {
+    return `(读 ${formatInteger(row.cache_read_tokens)} / 写 ${formatInteger(row.cache_creation_tokens)})`
+  }
+  return formatInteger(row.cached_tokens)
 }
 
 function recordRowKey(row: UsageRecordListItem): number {
@@ -586,10 +634,11 @@ const detailRows = computed(() => {
     { label: '结果', value: record.failed ? '失败' : '成功' },
     { label: '耗时', value: formatLatency(record.latency_ms) },
     { label: '输入 Token', value: formatInteger(record.input_tokens) },
-    { label: '输出 Token', value: formatInteger(record.output_tokens) },
-    { label: '输出 TPS', value: formatOutputTps(record) },
-    { label: '思考 Token', value: formatInteger(record.reasoning_tokens) },
     { label: '缓存 Token', value: formatInteger(record.cached_tokens) },
+    { label: '缓存读 Token', value: formatInteger(record.cache_read_tokens) },
+    { label: '缓存写 Token', value: formatInteger(record.cache_creation_tokens) },
+    { label: '输出 Token', value: formatOutputWithTps(record) },
+    { label: '思考 Token', value: formatInteger(record.reasoning_tokens) },
     { label: '总 Token', value: formatInteger(record.total_tokens) },
     { label: '费用', value: formatUsd(record.estimated_cost_usd) },
   ]
@@ -667,13 +716,7 @@ const columns = computed<DataTableColumns<UsageRecordListItem>>(() => [
     title: '输出',
     key: 'output_tokens',
     width: RECORDS_TABLE_COLUMN_WIDTHS.outputTokens,
-    render: (row) => formatInteger(row.output_tokens),
-  },
-  {
-    title: '输出 TPS',
-    key: 'output_tps',
-    width: RECORDS_TABLE_COLUMN_WIDTHS.outputTps,
-    render: formatOutputTps,
+    render: renderOutputWithTps,
   },
   {
     title: '思考',
@@ -685,7 +728,7 @@ const columns = computed<DataTableColumns<UsageRecordListItem>>(() => [
     title: '缓存',
     key: 'cached_tokens',
     width: RECORDS_TABLE_COLUMN_WIDTHS.cachedTokens,
-    render: (row) => formatInteger(row.cached_tokens),
+    render: formatCacheTokens,
   },
   {
     title: '总 Token',
@@ -935,6 +978,15 @@ onBeforeUnmount(() => {
   border-color: var(--cpa-border-strong);
   background: var(--cpa-surface-muted);
   color: var(--cpa-text-muted);
+}
+
+.output-with-tps {
+  white-space: nowrap;
+}
+
+.output-tps-muted {
+  color: var(--cpa-text-muted);
+  font-size: 12px;
 }
 
 .status-select {

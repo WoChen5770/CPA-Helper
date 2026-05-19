@@ -1,5 +1,11 @@
 import { apiClient } from '@/shared/api/apiClient'
-import type { ModelPrice, ModelPricePayload, ModelPriceSyncResponse } from '@/shared/types/api'
+import type {
+  LiteLLMProxySettings,
+  LiteLLMProxySettingsPayload,
+  ModelPrice,
+  ModelPricePayload,
+  ModelPriceSyncResponse,
+} from '@/shared/types/api'
 
 export function listModelPrices(): Promise<ModelPrice[]> {
   return apiClient.get<ModelPrice[]>('/model-prices')
@@ -19,4 +25,14 @@ export function deleteModelPrice(id: number): Promise<void> {
 
 export function syncLitellmModelPrices(): Promise<ModelPriceSyncResponse> {
   return apiClient.post<ModelPriceSyncResponse>('/model-prices/sync/litellm')
+}
+
+export function getLiteLLMProxySettings(): Promise<LiteLLMProxySettings> {
+  return apiClient.get<LiteLLMProxySettings>('/model-prices/litellm-proxy')
+}
+
+export function updateLiteLLMProxySettings(
+  payload: LiteLLMProxySettingsPayload,
+): Promise<LiteLLMProxySettings> {
+  return apiClient.put<LiteLLMProxySettings>('/model-prices/litellm-proxy', payload)
 }

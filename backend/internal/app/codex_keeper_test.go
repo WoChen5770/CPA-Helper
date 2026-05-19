@@ -1172,7 +1172,7 @@ func TestDBBackedAPIsReturnBeijingOffsetTimeStrings(t *testing.T) {
 	_, err = db.Exec(`
 		INSERT INTO model_prices (
 			provider, model, input_usd_per_million, output_usd_per_million,
-			cached_usd_per_million, reasoning_usd_per_million, source,
+			cache_read_usd_per_million, cache_creation_usd_per_million, source,
 			source_model, auto_synced, last_synced_at, updated_at
 		) VALUES (?, ?, 1, 2, 0, 0, 'manual', NULL, 0, ?, ?)
 	`, "openai", "gpt-time-test", "2026-05-10 08:09:10.123456", "2026-05-10 08:09:11.123456")

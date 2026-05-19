@@ -885,7 +885,7 @@ func (a *App) userUsageSummaries(ctx context.Context) (map[string]userUsageSumma
 		} else {
 			summary.SuccessRecords++
 		}
-		summary.TotalTokens += record.TotalTokens
+		summary.TotalTokens += usageAggregateTotalTokens(record)
 		if summary.FirstSeenAt == nil || record.Timestamp.Before(*summary.FirstSeenAt) {
 			t := record.Timestamp
 			summary.FirstSeenAt = &t
@@ -906,11 +906,11 @@ func (a *App) userUsageSummaries(ctx context.Context) (map[string]userUsageSumma
 			} else {
 				summary.TodaySuccessRecords++
 			}
-			summary.TodayInputTokens += record.InputTokens
+			summary.TodayInputTokens += usageAggregateInputTokens(record)
 			summary.TodayOutputTokens += record.OutputTokens
 			summary.TodayCachedTokens += record.CachedTokens
 			summary.TodayReasoningTokens += record.ReasoningTokens
-			summary.TodayTotalTokens += record.TotalTokens
+			summary.TodayTotalTokens += usageAggregateTotalTokens(record)
 			summary.TodayEstimatedCostUSD = mathRound(summary.TodayEstimatedCostUSD+amount, 8)
 			if unpriced {
 				summary.TodayUnpricedRecords++

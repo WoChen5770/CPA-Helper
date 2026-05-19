@@ -1298,7 +1298,7 @@ func keeperQuotaWindowBounds(minStart, maxEnd time.Time, usage *keeperQuotaWindo
 func (a *App) keeperUsageRecordsInRange(ctx context.Context, start, end time.Time) ([]UsageRecord, error) {
 	rows, err := a.db.QueryContext(ctx, `SELECT id, CAST(timestamp AS TEXT), usage_username, api_key_description, provider, model, endpoint, source,
 		source_account, request_id, auth, auth_index, latency_ms, failed, input_tokens, output_tokens, cached_tokens,
-		reasoning_tokens, total_tokens, dedupe_key, raw_json
+		cache_read_tokens, cache_creation_tokens, reasoning_tokens, total_tokens, dedupe_key, raw_json
 		FROM usage_records
 		WHERE timestamp >= ? AND timestamp < ?
 		ORDER BY timestamp`, dbTime(start), dbTime(end))
@@ -1402,11 +1402,11 @@ func addRecordToKeeperQuotaWindowUsage(usage *keeperQuotaWindowUsage, record Usa
 	} else {
 		usage.SuccessRecords++
 	}
-	usage.InputTokens += record.InputTokens
+	usage.InputTokens += usageAggregateInputTokens(record)
 	usage.OutputTokens += record.OutputTokens
 	usage.CachedTokens += record.CachedTokens
 	usage.ReasoningTokens += record.ReasoningTokens
-	usage.TotalTokens += record.TotalTokens
+	usage.TotalTokens += usageAggregateTotalTokens(record)
 	amount, unpriced := recordCost(record, prices)
 	if unpriced {
 		usage.UnpricedRecords++

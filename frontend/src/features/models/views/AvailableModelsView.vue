@@ -21,8 +21,8 @@ type PriceField = keyof Pick<
   AvailableModelPrice,
   | 'input_usd_per_million'
   | 'output_usd_per_million'
-  | 'cached_usd_per_million'
-  | 'reasoning_usd_per_million'
+  | 'cache_read_usd_per_million'
+  | 'cache_creation_usd_per_million'
 >
 
 const router = useRouter()
@@ -138,16 +138,16 @@ const columns: DataTableColumns<AvailableModel> = [
     render: (row) => renderPriceValue(row, 'output_usd_per_million'),
   },
   {
-    title: '缓存 ($/MTok)',
-    key: 'cached_usd_per_million',
+    title: '缓存读 ($/MTok)',
+    key: 'cache_read_usd_per_million',
     width: 145,
-    render: (row) => renderPriceValue(row, 'cached_usd_per_million'),
+    render: (row) => renderPriceValue(row, 'cache_read_usd_per_million'),
   },
   {
-    title: '思考 ($/MTok)',
-    key: 'reasoning_usd_per_million',
+    title: '缓存写 ($/MTok)',
+    key: 'cache_creation_usd_per_million',
     width: 145,
-    render: (row) => renderPriceValue(row, 'reasoning_usd_per_million'),
+    render: (row) => renderPriceValue(row, 'cache_creation_usd_per_million'),
   },
 ]
 

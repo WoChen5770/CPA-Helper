@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -14,31 +15,36 @@ import (
 const defaultLiteLLMPricingURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 
 type ModelPrice struct {
-	ID                     int        `json:"id"`
-	Provider               string     `json:"provider"`
-	Model                  string     `json:"model"`
-	InputUSDPerMillion     float64    `json:"input_usd_per_million"`
-	OutputUSDPerMillion    float64    `json:"output_usd_per_million"`
-	CachedUSDPerMillion    float64    `json:"cached_usd_per_million"`
-	ReasoningUSDPerMillion float64    `json:"reasoning_usd_per_million"`
-	Source                 string     `json:"source"`
-	SourceModel            *string    `json:"source_model"`
-	AutoSynced             bool       `json:"auto_synced"`
-	LastSyncedAt           *time.Time `json:"last_synced_at"`
-	UpdatedAt              time.Time  `json:"updated_at"`
+	ID                         int        `json:"id"`
+	Provider                   string     `json:"provider"`
+	Model                      string     `json:"model"`
+	InputUSDPerMillion         float64    `json:"input_usd_per_million"`
+	OutputUSDPerMillion        float64    `json:"output_usd_per_million"`
+	CacheReadUSDPerMillion     float64    `json:"cache_read_usd_per_million"`
+	CacheCreationUSDPerMillion float64    `json:"cache_creation_usd_per_million"`
+	Source                     string     `json:"source"`
+	SourceModel                *string    `json:"source_model"`
+	AutoSynced                 bool       `json:"auto_synced"`
+	LastSyncedAt               *time.Time `json:"last_synced_at"`
+	UpdatedAt                  time.Time  `json:"updated_at"`
 }
 
 type modelPricePayload struct {
-	Provider               string  `json:"provider"`
-	Model                  string  `json:"model"`
-	InputUSDPerMillion     float64 `json:"input_usd_per_million"`
-	OutputUSDPerMillion    float64 `json:"output_usd_per_million"`
-	CachedUSDPerMillion    float64 `json:"cached_usd_per_million"`
-	ReasoningUSDPerMillion float64 `json:"reasoning_usd_per_million"`
+	Provider                   string  `json:"provider"`
+	Model                      string  `json:"model"`
+	InputUSDPerMillion         float64 `json:"input_usd_per_million"`
+	OutputUSDPerMillion        float64 `json:"output_usd_per_million"`
+	CacheReadUSDPerMillion     float64 `json:"cache_read_usd_per_million"`
+	CacheCreationUSDPerMillion float64 `json:"cache_creation_usd_per_million"`
 }
 
 type modelPriceSyncRequest struct {
 	SourceURL *string `json:"source_url"`
+}
+
+type liteLLMProxySettingsPayload struct {
+	Enabled  *bool   `json:"enabled"`
+	ProxyURL *string `json:"proxy_url"`
 }
 
 func (a *App) handleModelPrices(w http.ResponseWriter, r *http.Request) error {
@@ -73,7 +79,8 @@ func (a *App) handleModelPrices(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) handleModelPriceByPath(w http.ResponseWriter, r *http.Request) error {
-	if strings.TrimPrefix(r.URL.Path, "/api/model-prices/") == "sync/litellm" {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/model-prices/"), "/")
+	if path == "sync/litellm" {
 		if _, err := a.adminUser(r.Context(), r); err != nil {
 			return err
 		}
@@ -82,10 +89,16 @@ func (a *App) handleModelPriceByPath(w http.ResponseWriter, r *http.Request) err
 		}
 		return a.handleSyncLiteLLMPrices(w, r)
 	}
+	if path == "litellm-proxy" {
+		if _, err := a.adminUser(r.Context(), r); err != nil {
+			return err
+		}
+		return a.handleLiteLLMProxySettings(w, r)
+	}
 	if _, err := a.adminUser(r.Context(), r); err != nil {
 		return err
 	}
-	idText := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/model-prices/"), "/")
+	idText := path
 	id, err := parseIntPath(idText)
 	if err != nil {
 		return err
@@ -113,13 +126,60 @@ func (a *App) handleModelPriceByPath(w http.ResponseWriter, r *http.Request) err
 	}
 }
 
+func (a *App) handleLiteLLMProxySettings(w http.ResponseWriter, r *http.Request) error {
+	switch r.Method {
+	case http.MethodGet:
+		cfg, err := a.loadConfig(r.Context())
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, liteLLMProxySettingsResponse(cfg.LiteLLMProxy))
+		return nil
+	case http.MethodPut:
+		var payload liteLLMProxySettingsPayload
+		if err := decodeJSON(r, &payload); err != nil {
+			return err
+		}
+		cfg, err := a.loadConfig(r.Context())
+		if err != nil {
+			return err
+		}
+		next := cfg.LiteLLMProxy
+		if payload.Enabled != nil {
+			next.Enabled = *payload.Enabled
+		}
+		if payload.ProxyURL != nil {
+			next.ProxyURL = strings.TrimSpace(*payload.ProxyURL)
+		}
+		normalized, err := normalizeLiteLLMProxyConfig(next)
+		if err != nil {
+			return err
+		}
+		cfg.LiteLLMProxy = normalized
+		if err := a.saveConfig(r.Context(), cfg); err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, liteLLMProxySettingsResponse(cfg.LiteLLMProxy))
+		return nil
+	default:
+		return methodNotAllowed()
+	}
+}
+
+func liteLLMProxySettingsResponse(cfg LiteLLMProxyConfig) map[string]any {
+	return map[string]any{
+		"enabled":   cfg.Enabled,
+		"proxy_url": cfg.ProxyURL,
+	}
+}
+
 func validatePricePayload(payload modelPricePayload) (modelPricePayload, error) {
 	payload.Provider = strings.TrimSpace(payload.Provider)
 	payload.Model = strings.TrimSpace(payload.Model)
 	if payload.Provider == "" || payload.Model == "" {
 		return payload, validationError("provider/model 不能为空")
 	}
-	if payload.InputUSDPerMillion < 0 || payload.OutputUSDPerMillion < 0 || payload.CachedUSDPerMillion < 0 || payload.ReasoningUSDPerMillion < 0 {
+	if payload.InputUSDPerMillion < 0 || payload.OutputUSDPerMillion < 0 || payload.CacheReadUSDPerMillion < 0 || payload.CacheCreationUSDPerMillion < 0 {
 		return payload, validationError("价格不能为负数")
 	}
 	return payload, nil
@@ -128,7 +188,7 @@ func validatePricePayload(payload modelPricePayload) (modelPricePayload, error) 
 func (a *App) listPrices(ctx context.Context) ([]ModelPrice, error) {
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT id, provider, model, input_usd_per_million, output_usd_per_million,
-		       cached_usd_per_million, reasoning_usd_per_million, source,
+		       cache_read_usd_per_million, cache_creation_usd_per_million, source,
 		       source_model, auto_synced, CAST(last_synced_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM model_prices ORDER BY provider, model
 	`)
@@ -156,7 +216,7 @@ func scanPrices(rows *sql.Rows) ([]ModelPrice, error) {
 	for rows.Next() {
 		var price ModelPrice
 		var sourceModel, lastSynced, updatedAt sql.NullString
-		if err := rows.Scan(&price.ID, &price.Provider, &price.Model, &price.InputUSDPerMillion, &price.OutputUSDPerMillion, &price.CachedUSDPerMillion, &price.ReasoningUSDPerMillion, &price.Source, &sourceModel, &price.AutoSynced, &lastSynced, &updatedAt); err != nil {
+		if err := rows.Scan(&price.ID, &price.Provider, &price.Model, &price.InputUSDPerMillion, &price.OutputUSDPerMillion, &price.CacheReadUSDPerMillion, &price.CacheCreationUSDPerMillion, &price.Source, &sourceModel, &price.AutoSynced, &lastSynced, &updatedAt); err != nil {
 			return nil, err
 		}
 		price.SourceModel = nullableString(sourceModel)
@@ -178,10 +238,10 @@ func (a *App) createPrice(ctx context.Context, payload modelPricePayload) (Model
 	result, err := a.db.ExecContext(ctx, `
 		INSERT INTO model_prices (
 			provider, model, input_usd_per_million, output_usd_per_million,
-			cached_usd_per_million, reasoning_usd_per_million, source,
+			cache_read_usd_per_million, cache_creation_usd_per_million, source,
 			source_model, auto_synced, last_synced_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, 'manual', NULL, 0, NULL, ?)
-	`, payload.Provider, payload.Model, payload.InputUSDPerMillion, payload.OutputUSDPerMillion, payload.CachedUSDPerMillion, payload.ReasoningUSDPerMillion, now)
+	`, payload.Provider, payload.Model, payload.InputUSDPerMillion, payload.OutputUSDPerMillion, payload.CacheReadUSDPerMillion, payload.CacheCreationUSDPerMillion, now)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			return ModelPrice{}, conflictError("该 provider/model 价格已存在")
@@ -200,10 +260,10 @@ func (a *App) updatePrice(ctx context.Context, id int, payload modelPricePayload
 	result, err := a.db.ExecContext(ctx, `
 		UPDATE model_prices
 		SET provider = ?, model = ?, input_usd_per_million = ?, output_usd_per_million = ?,
-		    cached_usd_per_million = ?, reasoning_usd_per_million = ?, source = 'manual',
+		    cache_read_usd_per_million = ?, cache_creation_usd_per_million = ?, source = 'manual',
 		    source_model = NULL, auto_synced = 0, last_synced_at = NULL, updated_at = ?
 		WHERE id = ?
-	`, payload.Provider, payload.Model, payload.InputUSDPerMillion, payload.OutputUSDPerMillion, payload.CachedUSDPerMillion, payload.ReasoningUSDPerMillion, dbTime(time.Now()), id)
+	`, payload.Provider, payload.Model, payload.InputUSDPerMillion, payload.OutputUSDPerMillion, payload.CacheReadUSDPerMillion, payload.CacheCreationUSDPerMillion, dbTime(time.Now()), id)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			return ModelPrice{}, conflictError("该 provider/model 价格已存在")
@@ -232,7 +292,7 @@ func (a *App) deletePrice(ctx context.Context, id int) error {
 func (a *App) getPrice(ctx context.Context, id int) (ModelPrice, error) {
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT id, provider, model, input_usd_per_million, output_usd_per_million,
-		       cached_usd_per_million, reasoning_usd_per_million, source,
+		       cache_read_usd_per_million, cache_creation_usd_per_million, source,
 		       source_model, auto_synced, CAST(last_synced_at AS TEXT), CAST(updated_at AS TEXT)
 		FROM model_prices WHERE id = ?
 	`, id)
@@ -265,7 +325,15 @@ func (a *App) handleSyncLiteLLMPrices(w http.ResponseWriter, r *http.Request) er
 	if err := ensureHTTPSURL(sourceURL); err != nil {
 		return err
 	}
-	response, rawPayload, err := doJSON(r.Context(), httpClient(30*time.Second), http.MethodGet, sourceURL, nil, nil)
+	cfg, err := a.loadConfig(r.Context())
+	if err != nil {
+		return err
+	}
+	client, err := liteLLMHTTPClient(30*time.Second, cfg.LiteLLMProxy)
+	if err != nil {
+		return err
+	}
+	response, rawPayload, err := doJSON(r.Context(), client, http.MethodGet, sourceURL, nil, nil)
 	if err != nil {
 		return validationError("下载 LiteLLM 价格数据失败")
 	}
@@ -285,12 +353,13 @@ func (a *App) handleSyncLiteLLMPrices(w http.ResponseWriter, r *http.Request) er
 }
 
 func (a *App) syncLiteLLMPrices(ctx context.Context, sourceURL string, rawData map[string]any) (map[string]any, error) {
-	existing, err := a.priceMap(ctx)
-	if err != nil {
-		return nil, err
-	}
 	now := dbTime(time.Now())
-	created, updated, unchanged, skippedManual, skippedInvalid := 0, 0, 0, 0, 0
+	type litellmPriceRow struct {
+		modelName string
+		payload   modelPricePayload
+	}
+	rows := make([]litellmPriceRow, 0, len(rawData))
+	skippedInvalid := 0
 	for modelName, rawEntry := range rawData {
 		if modelName == "sample_spec" {
 			skippedInvalid++
@@ -301,52 +370,52 @@ func (a *App) syncLiteLLMPrices(ctx context.Context, sourceURL string, rawData m
 			skippedInvalid++
 			continue
 		}
-		key := priceKey(payload.Provider, payload.Model)
-		item, exists := existing[key]
-		if !exists {
-			result, err := a.db.ExecContext(ctx, `
-				INSERT INTO model_prices (
-					provider, model, input_usd_per_million, output_usd_per_million,
-					cached_usd_per_million, reasoning_usd_per_million, source,
-					source_model, auto_synced, last_synced_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, 'litellm', ?, 1, ?, ?)
-			`, payload.Provider, payload.Model, payload.InputUSDPerMillion, payload.OutputUSDPerMillion, payload.CachedUSDPerMillion, payload.ReasoningUSDPerMillion, modelName, now, now)
-			if err != nil {
-				return nil, err
-			}
-			id, _ := result.LastInsertId()
-			payloadPrice := ModelPrice{ID: int(id), Provider: payload.Provider, Model: payload.Model}
-			existing[key] = payloadPrice
-			created++
-			continue
+		rows = append(rows, litellmPriceRow{modelName: modelName, payload: payload})
+	}
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
 		}
-		if !item.AutoSynced || item.Source != "litellm" {
-			skippedManual++
-			continue
-		}
-		if pricesEqual(item, payload) && item.SourceModel != nil && *item.SourceModel == modelName {
-			unchanged++
-			continue
-		}
-		_, err := a.db.ExecContext(ctx, `
-			UPDATE model_prices
-			SET provider = ?, model = ?, input_usd_per_million = ?, output_usd_per_million = ?,
-			    cached_usd_per_million = ?, reasoning_usd_per_million = ?, source = 'litellm',
-			    source_model = ?, auto_synced = 1, last_synced_at = ?, updated_at = ?
-			WHERE id = ?
-		`, payload.Provider, payload.Model, payload.InputUSDPerMillion, payload.OutputUSDPerMillion, payload.CachedUSDPerMillion, payload.ReasoningUSDPerMillion, modelName, now, now, item.ID)
+	}()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM model_prices WHERE source = 'litellm'`); err != nil {
+		return nil, err
+	}
+	inserted, skippedManual := 0, 0
+	for _, row := range rows {
+		payload := row.payload
+		result, err := tx.ExecContext(ctx, `
+			INSERT OR IGNORE INTO model_prices (
+				provider, model, input_usd_per_million, output_usd_per_million,
+				cache_read_usd_per_million, cache_creation_usd_per_million, source,
+				source_model, auto_synced, last_synced_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, 'litellm', ?, 1, ?, ?)
+		`, payload.Provider, payload.Model, payload.InputUSDPerMillion, payload.OutputUSDPerMillion, payload.CacheReadUSDPerMillion, payload.CacheCreationUSDPerMillion, row.modelName, now, now)
 		if err != nil {
 			return nil, err
 		}
-		updated++
+		affected, _ := result.RowsAffected()
+		if affected == 0 {
+			skippedManual++
+			continue
+		}
+		inserted++
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	committed = true
 	return map[string]any{
 		"source_url":      sourceURL,
 		"total_entries":   len(rawData),
-		"imported":        created + updated,
-		"created":         created,
-		"updated":         updated,
-		"unchanged":       unchanged,
+		"imported":        inserted,
+		"created":         inserted,
+		"updated":         0,
+		"unchanged":       0,
 		"skipped_manual":  skippedManual,
 		"skipped_invalid": skippedInvalid,
 	}, nil
@@ -363,14 +432,14 @@ func litellmEntryToPrice(modelName string, rawEntry any) (modelPricePayload, boo
 		return modelPricePayload{}, false
 	}
 	payload := modelPricePayload{
-		Provider:               provider,
-		Model:                  model,
-		InputUSDPerMillion:     usdPerMillion(entry["input_cost_per_token"]),
-		OutputUSDPerMillion:    usdPerMillion(entry["output_cost_per_token"]),
-		CachedUSDPerMillion:    usdPerMillion(entry["cache_read_input_token_cost"]),
-		ReasoningUSDPerMillion: 0,
+		Provider:                   provider,
+		Model:                      model,
+		InputUSDPerMillion:         usdPerMillion(entry["input_cost_per_token"]),
+		OutputUSDPerMillion:        usdPerMillion(entry["output_cost_per_token"]),
+		CacheReadUSDPerMillion:     usdPerMillion(entry["cache_read_input_token_cost"]),
+		CacheCreationUSDPerMillion: usdPerMillion(entry["cache_creation_input_token_cost"]),
 	}
-	if payload.InputUSDPerMillion == 0 && payload.OutputUSDPerMillion == 0 && payload.CachedUSDPerMillion == 0 && payload.ReasoningUSDPerMillion == 0 {
+	if payload.InputUSDPerMillion == 0 && payload.OutputUSDPerMillion == 0 && payload.CacheReadUSDPerMillion == 0 && payload.CacheCreationUSDPerMillion == 0 {
 		return modelPricePayload{}, false
 	}
 	return payload, true
@@ -414,8 +483,8 @@ func pricesEqual(item ModelPrice, payload modelPricePayload) bool {
 		item.Model == payload.Model &&
 		item.InputUSDPerMillion == payload.InputUSDPerMillion &&
 		item.OutputUSDPerMillion == payload.OutputUSDPerMillion &&
-		item.CachedUSDPerMillion == payload.CachedUSDPerMillion &&
-		item.ReasoningUSDPerMillion == payload.ReasoningUSDPerMillion
+		item.CacheReadUSDPerMillion == payload.CacheReadUSDPerMillion &&
+		item.CacheCreationUSDPerMillion == payload.CacheCreationUSDPerMillion
 }
 
 func priceKey(provider, model string) [2]string {
@@ -449,31 +518,117 @@ func findMatchingPrice(prices map[[2]string]ModelPrice, provider, model *string)
 func recordCost(record UsageRecord, prices map[[2]string]ModelPrice) (float64, bool) {
 	price := findMatchingPrice(prices, record.Provider, record.Model)
 	if price == nil {
-		return 0, record.TotalTokens > 0
+		return 0, usageAggregateTotalTokens(record) > 0
 	}
-	inputTokens, cachedTokens := splitPricedSubset(record.InputTokens, record.CachedTokens, price.CachedUSDPerMillion)
-	outputTokens, reasoningTokens := splitPricedSubset(record.OutputTokens, record.ReasoningTokens, price.ReasoningUSDPerMillion)
-	amount := millionTokenCost(inputTokens, price.InputUSDPerMillion) +
-		millionTokenCost(outputTokens, price.OutputUSDPerMillion) +
-		millionTokenCost(cachedTokens, price.CachedUSDPerMillion) +
-		millionTokenCost(reasoningTokens, price.ReasoningUSDPerMillion)
+	inputTokens := nonNegativeTokens(record.InputTokens)
+	outputTokens := nonNegativeTokens(record.OutputTokens)
+	amount := 0.0
+	if isClaudeProvider(record.Provider) {
+		amount = millionTokenCost(inputTokens, price.InputUSDPerMillion) +
+			millionTokenCost(nonNegativeTokens(record.CacheReadTokens), price.CacheReadUSDPerMillion) +
+			millionTokenCost(nonNegativeTokens(record.CacheCreationTokens), price.CacheCreationUSDPerMillion) +
+			millionTokenCost(outputTokens, price.OutputUSDPerMillion)
+	} else {
+		cacheRead := boundedTokens(record.CachedTokens, inputTokens)
+		normalInput := inputTokens - cacheRead
+		amount = millionTokenCost(normalInput, price.InputUSDPerMillion) +
+			millionTokenCost(cacheRead, price.CacheReadUSDPerMillion) +
+			millionTokenCost(outputTokens, price.OutputUSDPerMillion)
+	}
 	return mathRound(amount, 8), false
 }
 
-func splitPricedSubset(totalTokens, subsetTokens int, subsetPrice float64) (int, int) {
-	if totalTokens < 0 {
-		totalTokens = 0
+func liteLLMHTTPClient(timeout time.Duration, proxyCfg LiteLLMProxyConfig) (*http.Client, error) {
+	client := httpClient(timeout)
+	if !proxyCfg.Enabled {
+		return client, nil
 	}
-	if subsetTokens < 0 {
-		subsetTokens = 0
+	normalized, err := normalizeLiteLLMProxyConfig(proxyCfg)
+	if err != nil {
+		return nil, err
 	}
-	if subsetTokens > totalTokens {
-		subsetTokens = totalTokens
+	proxyURL, err := url.Parse(normalized.ProxyURL)
+	if err != nil {
+		return nil, validationError("代理地址必须是有效的 http://、https:// 或 socks5:// 地址")
 	}
-	if subsetPrice <= 0 {
-		return totalTokens, 0
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("default HTTP transport has unexpected type")
 	}
-	return totalTokens - subsetTokens, subsetTokens
+	cloned := transport.Clone()
+	cloned.Proxy = http.ProxyURL(proxyURL)
+	client.Transport = cloned
+	return client, nil
+}
+
+func normalizeLiteLLMProxyConfig(input LiteLLMProxyConfig) (LiteLLMProxyConfig, error) {
+	proxyURL, err := normalizeLiteLLMProxyURL(input.ProxyURL)
+	if err != nil {
+		return LiteLLMProxyConfig{}, err
+	}
+	if input.Enabled && proxyURL == "" {
+		return LiteLLMProxyConfig{}, validationError("启用代理时必须填写代理地址")
+	}
+	return LiteLLMProxyConfig{Enabled: input.Enabled, ProxyURL: proxyURL}, nil
+}
+
+func normalizeLiteLLMProxyURL(value string) (string, error) {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(text)
+	if err != nil || parsed.Host == "" || strings.TrimSpace(parsed.Hostname()) == "" {
+		return "", validationError("代理地址必须是有效的 http://、https:// 或 socks5:// 地址")
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https", "socks5":
+		parsed.Scheme = strings.ToLower(parsed.Scheme)
+	case "sock5":
+		parsed.Scheme = "socks5"
+	default:
+		return "", validationError("代理地址必须是有效的 http://、https:// 或 socks5:// 地址")
+	}
+	return parsed.String(), nil
+}
+
+func usageAggregateInputTokens(record UsageRecord) int {
+	inputTokens := nonNegativeTokens(record.InputTokens)
+	if isClaudeProvider(record.Provider) {
+		return inputTokens + nonNegativeTokens(record.CacheReadTokens) + nonNegativeTokens(record.CacheCreationTokens)
+	}
+	return inputTokens
+}
+
+func usageAggregateTotalTokens(record UsageRecord) int {
+	if isClaudeProvider(record.Provider) {
+		return usageAggregateInputTokens(record) + nonNegativeTokens(record.OutputTokens) + nonNegativeTokens(record.ReasoningTokens)
+	}
+	return nonNegativeTokens(record.TotalTokens)
+}
+
+func isClaudeProvider(provider *string) bool {
+	if provider == nil {
+		return false
+	}
+	normalized := strings.ToLower(strings.TrimSpace(*provider))
+	return normalized == "claude" || normalized == "anthropic"
+}
+
+func boundedTokens(tokens, max int) int {
+	tokens = nonNegativeTokens(tokens)
+	max = nonNegativeTokens(max)
+	if tokens > max {
+		return max
+	}
+	return tokens
+}
+
+func nonNegativeTokens(tokens int) int {
+	if tokens < 0 {
+		return 0
+	}
+	return tokens
 }
 
 func millionTokenCost(tokens int, usdPerMillion float64) float64 {

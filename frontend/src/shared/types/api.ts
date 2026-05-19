@@ -298,6 +298,8 @@ export interface UsageRecordListItem {
   input_tokens: number
   output_tokens: number
   cached_tokens: number
+  cache_read_tokens: number
+  cache_creation_tokens: number
   reasoning_tokens: number
   total_tokens: number
   estimated_cost_usd: number
@@ -323,8 +325,8 @@ export interface ModelPrice {
   model: string
   input_usd_per_million: number
   output_usd_per_million: number
-  cached_usd_per_million: number
-  reasoning_usd_per_million: number
+  cache_read_usd_per_million: number
+  cache_creation_usd_per_million: number
   source: 'manual' | 'litellm' | string
   source_model: string | null
   auto_synced: boolean
@@ -337,8 +339,8 @@ export interface ModelPricePayload {
   model: string
   input_usd_per_million: number
   output_usd_per_million: number
-  cached_usd_per_million: number
-  reasoning_usd_per_million: number
+  cache_read_usd_per_million: number
+  cache_creation_usd_per_million: number
 }
 
 export interface ModelPriceSyncResponse {
@@ -350,6 +352,16 @@ export interface ModelPriceSyncResponse {
   unchanged: number
   skipped_manual: number
   skipped_invalid: number
+}
+
+export interface LiteLLMProxySettings {
+  enabled: boolean
+  proxy_url: string
+}
+
+export interface LiteLLMProxySettingsPayload {
+  enabled: boolean
+  proxy_url: string
 }
 
 export interface UserApiKeySummary {
@@ -393,8 +405,8 @@ export interface AvailableModelPrice {
   model: string
   input_usd_per_million: number
   output_usd_per_million: number
-  cached_usd_per_million: number
-  reasoning_usd_per_million: number
+  cache_read_usd_per_million: number
+  cache_creation_usd_per_million: number
 }
 
 export interface AvailableModel {

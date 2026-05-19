@@ -896,7 +896,7 @@ func insertKeeperTestPrice(t *testing.T, app *App) {
 	_, err := app.db.Exec(`
 		INSERT INTO model_prices (
 			provider, model, input_usd_per_million, output_usd_per_million,
-			cached_usd_per_million, reasoning_usd_per_million, source, updated_at
+			cache_read_usd_per_million, cache_creation_usd_per_million, source, updated_at
 		) VALUES ('codex', 'gpt-test', 1, 2, 0, 0, 'manual', ?)
 		ON CONFLICT(provider, model) DO UPDATE SET
 			input_usd_per_million = excluded.input_usd_per_million,

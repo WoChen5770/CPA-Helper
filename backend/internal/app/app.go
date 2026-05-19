@@ -436,11 +436,17 @@ type KeeperConfig struct {
 	AutoStartDaemon                   bool   `json:"auto_start_daemon"`
 }
 
+type LiteLLMProxyConfig struct {
+	Enabled  bool   `json:"enabled"`
+	ProxyURL string `json:"proxy_url"`
+}
+
 type AppConfig struct {
-	Collector               CollectorConfig `json:"collector"`
-	CodexKeeper             KeeperConfig    `json:"codex_keeper"`
-	CodexKeeperPriorityRule map[string]int  `json:"codex_keeper_priority_rules"`
-	SessionSecret           string          `json:"session_secret"`
+	Collector               CollectorConfig    `json:"collector"`
+	CodexKeeper             KeeperConfig       `json:"codex_keeper"`
+	CodexKeeperPriorityRule map[string]int     `json:"codex_keeper_priority_rules"`
+	LiteLLMProxy            LiteLLMProxyConfig `json:"litellm_proxy"`
+	SessionSecret           string             `json:"session_secret"`
 }
 
 func defaultConfig() (AppConfig, error) {
@@ -471,7 +477,11 @@ func defaultConfig() (AppConfig, error) {
 			AutoStartDaemon:                   false,
 		},
 		CodexKeeperPriorityRule: clonePriorityRules(defaultKeeperPriorityRules),
-		SessionSecret:           secret,
+		LiteLLMProxy: LiteLLMProxyConfig{
+			Enabled:  false,
+			ProxyURL: "",
+		},
+		SessionSecret: secret,
 	}, nil
 }
 
@@ -492,14 +502,15 @@ func (a *App) loadConfig(ctx context.Context) (AppConfig, error) {
 	row := a.db.QueryRowContext(ctx, `
 		SELECT collector_enabled, cliaproxy_url, management_key, queue_name, batch_size,
 		       poll_interval_seconds, retry_interval_seconds, codex_keeper_settings,
-		       codex_keeper_priority_rules, session_secret
+		       codex_keeper_priority_rules, litellm_proxy_enabled, litellm_proxy_url,
+		       session_secret
 		FROM app_settings WHERE id = 1
 	`)
-	var collectorEnabled bool
-	var cliaproxyURL, managementKey, queueName, keeperJSON, rulesJSON, sessionSecret string
+	var collectorEnabled, litellmProxyEnabled bool
+	var cliaproxyURL, managementKey, queueName, keeperJSON, rulesJSON, litellmProxyURL, sessionSecret string
 	var batchSize int
 	var pollInterval, retryInterval float64
-	if err := row.Scan(&collectorEnabled, &cliaproxyURL, &managementKey, &queueName, &batchSize, &pollInterval, &retryInterval, &keeperJSON, &rulesJSON, &sessionSecret); err != nil {
+	if err := row.Scan(&collectorEnabled, &cliaproxyURL, &managementKey, &queueName, &batchSize, &pollInterval, &retryInterval, &keeperJSON, &rulesJSON, &litellmProxyEnabled, &litellmProxyURL, &sessionSecret); err != nil {
 		return AppConfig{}, err
 	}
 	cfg, err := defaultConfig()
@@ -527,6 +538,10 @@ func (a *App) loadConfig(ctx context.Context) (AppConfig, error) {
 	}
 	if strings.TrimSpace(sessionSecret) != "" {
 		cfg.SessionSecret = sessionSecret
+	}
+	cfg.LiteLLMProxy = LiteLLMProxyConfig{
+		Enabled:  litellmProxyEnabled,
+		ProxyURL: strings.TrimSpace(litellmProxyURL),
 	}
 	return cfg, nil
 }
@@ -581,9 +596,10 @@ func (a *App) saveConfig(ctx context.Context, cfg AppConfig) error {
 		SET collector_enabled = ?, cliaproxy_url = ?, management_key = ?, queue_name = ?,
 		    batch_size = ?, poll_interval_seconds = ?, retry_interval_seconds = ?,
 		    codex_keeper_settings = ?, codex_keeper_priority_rules = ?,
+		    litellm_proxy_enabled = ?, litellm_proxy_url = ?,
 		    session_secret = ?, updated_at = ?
 		WHERE id = 1
-	`, cfg.Collector.Enabled, strings.TrimRight(strings.TrimSpace(cfg.Collector.CLIProxyURL), "/"), strings.TrimSpace(cfg.Collector.ManagementKey), strings.TrimSpace(cfg.Collector.QueueName), cfg.Collector.BatchSize, cfg.Collector.PollIntervalSeconds, cfg.Collector.RetryIntervalSeconds, string(keeperBytes), string(rulesBytes), cfg.SessionSecret, dbTime(time.Now()))
+	`, cfg.Collector.Enabled, strings.TrimRight(strings.TrimSpace(cfg.Collector.CLIProxyURL), "/"), strings.TrimSpace(cfg.Collector.ManagementKey), strings.TrimSpace(cfg.Collector.QueueName), cfg.Collector.BatchSize, cfg.Collector.PollIntervalSeconds, cfg.Collector.RetryIntervalSeconds, string(keeperBytes), string(rulesBytes), cfg.LiteLLMProxy.Enabled, strings.TrimSpace(cfg.LiteLLMProxy.ProxyURL), cfg.SessionSecret, dbTime(time.Now()))
 	return err
 }
 
@@ -605,10 +621,11 @@ func (a *App) ensureAppSetting(ctx context.Context) error {
 		INSERT INTO app_settings (
 			id, collector_enabled, cliaproxy_url, management_key, queue_name,
 			batch_size, poll_interval_seconds, retry_interval_seconds,
-			codex_keeper_settings, codex_keeper_priority_rules, session_secret,
+			codex_keeper_settings, codex_keeper_priority_rules,
+			litellm_proxy_enabled, litellm_proxy_url, session_secret,
 			created_at, updated_at
-		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, cfg.Collector.Enabled, cfg.Collector.CLIProxyURL, cfg.Collector.ManagementKey, cfg.Collector.QueueName, cfg.Collector.BatchSize, cfg.Collector.PollIntervalSeconds, cfg.Collector.RetryIntervalSeconds, string(keeperBytes), string(rulesBytes), cfg.SessionSecret, dbTime(time.Now()), dbTime(time.Now()))
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, cfg.Collector.Enabled, cfg.Collector.CLIProxyURL, cfg.Collector.ManagementKey, cfg.Collector.QueueName, cfg.Collector.BatchSize, cfg.Collector.PollIntervalSeconds, cfg.Collector.RetryIntervalSeconds, string(keeperBytes), string(rulesBytes), cfg.LiteLLMProxy.Enabled, cfg.LiteLLMProxy.ProxyURL, cfg.SessionSecret, dbTime(time.Now()), dbTime(time.Now()))
 	return err
 }
 

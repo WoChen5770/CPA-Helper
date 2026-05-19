@@ -22,13 +22,37 @@ func TestRunMigrationsCreatesGooseVersionAndFinalSchema(t *testing.T) {
 	if testColumnExists(t, app.db, "usage_records", "api_key_hash") {
 		t.Fatal("old usage_records.api_key_hash should not exist")
 	}
+	if !testColumnExists(t, app.db, "usage_records", "cache_read_tokens") {
+		t.Fatal("usage_records.cache_read_tokens was not created")
+	}
+	if !testColumnExists(t, app.db, "usage_records", "cache_creation_tokens") {
+		t.Fatal("usage_records.cache_creation_tokens was not created")
+	}
+	if !testColumnExists(t, app.db, "model_prices", "cache_read_usd_per_million") {
+		t.Fatal("model_prices.cache_read_usd_per_million was not created")
+	}
+	if !testColumnExists(t, app.db, "model_prices", "cache_creation_usd_per_million") {
+		t.Fatal("model_prices.cache_creation_usd_per_million was not created")
+	}
+	if testColumnExists(t, app.db, "model_prices", "cached_usd_per_million") {
+		t.Fatal("old model_prices.cached_usd_per_million should not exist")
+	}
+	if testColumnExists(t, app.db, "model_prices", "reasoning_usd_per_million") {
+		t.Fatal("old model_prices.reasoning_usd_per_million should not exist")
+	}
+	if !testColumnExists(t, app.db, "app_settings", "litellm_proxy_enabled") {
+		t.Fatal("app_settings.litellm_proxy_enabled was not created")
+	}
+	if !testColumnExists(t, app.db, "app_settings", "litellm_proxy_url") {
+		t.Fatal("app_settings.litellm_proxy_url was not created")
+	}
 
 	var version int64
 	if err := app.db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("query goose version: %v", err)
 	}
-	if version != 202605180001 {
-		t.Fatalf("goose version = %d, want 202605180001", version)
+	if version != 202605190002 {
+		t.Fatalf("goose version = %d, want 202605190002", version)
 	}
 }
 
@@ -124,7 +148,16 @@ func TestRunMigrationsRepairsOldPythonSchemaWithoutOldCode(t *testing.T) {
 			'openai', 'gpt-test', '/v1/chat/completions', 'queue', 'req-1',
 			'bearer', 12.5, 0, 10, 20, 0, 0, 30, 'dedupe-1', ?
 		)
-	`, apiKeyHash, `{"api_key":"`+apiKey+`","auth":"bearer"}`); err != nil {
+	`, apiKeyHash, `{"api_key":"`+apiKey+`","auth":"bearer","tokens":{"cache_read_tokens":7,"cache_creation_tokens":8}}`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO model_prices (
+			provider, model, input_usd_per_million, output_usd_per_million,
+			cached_usd_per_million, reasoning_usd_per_million, updated_at
+		) VALUES ('openai', 'gpt-old-price', 1, 2, 0.5, 9, '2026-05-04 00:00:00')
+	`); err != nil {
 		_ = db.Close()
 		t.Fatal(err)
 	}
@@ -170,6 +203,26 @@ func TestRunMigrationsRepairsOldPythonSchemaWithoutOldCode(t *testing.T) {
 	}
 	if timestamp != "2026-05-04T00:00:00+08:00" {
 		t.Fatalf("migrated timestamp = %q, want Beijing offset timestamp", timestamp)
+	}
+	var cacheReadTokens, cacheCreationTokens int
+	if err := app.db.QueryRow(`SELECT cache_read_tokens, cache_creation_tokens FROM usage_records WHERE dedupe_key = 'dedupe-1'`).Scan(&cacheReadTokens, &cacheCreationTokens); err != nil {
+		t.Fatalf("migrated usage cache tokens not found: %v", err)
+	}
+	if cacheReadTokens != 7 || cacheCreationTokens != 8 {
+		t.Fatalf("migrated cache tokens = read %d creation %d, want 7 and 8", cacheReadTokens, cacheCreationTokens)
+	}
+	if testColumnExists(t, app.db, "model_prices", "cached_usd_per_million") {
+		t.Fatal("old model_prices.cached_usd_per_million should be removed")
+	}
+	if testColumnExists(t, app.db, "model_prices", "reasoning_usd_per_million") {
+		t.Fatal("old model_prices.reasoning_usd_per_million should be removed")
+	}
+	var cacheReadPrice, cacheCreationPrice float64
+	if err := app.db.QueryRow(`SELECT cache_read_usd_per_million, cache_creation_usd_per_million FROM model_prices WHERE provider = 'openai' AND model = 'gpt-old-price'`).Scan(&cacheReadPrice, &cacheCreationPrice); err != nil {
+		t.Fatalf("migrated model price not found: %v", err)
+	}
+	if cacheReadPrice != 0.5 || cacheCreationPrice != 0 {
+		t.Fatalf("migrated cache prices = read %v creation %v, want 0.5 and 0", cacheReadPrice, cacheCreationPrice)
 	}
 }
 
