@@ -136,7 +136,7 @@ func (a *App) handleUsage(w http.ResponseWriter, r *http.Request) error {
 		if err := requireMethod(r, http.MethodGet); err != nil {
 			return err
 		}
-		return a.usageOptions(w, r, user)
+		return a.usageOptions(w, r, filters, user)
 	default:
 		return notFoundError("Not Found")
 	}
@@ -354,7 +354,7 @@ func (a *App) usageOverview(w http.ResponseWriter, r *http.Request, filters Usag
 	if scope.IsAdmin {
 		userRanking = rankingFromRecords(records, prices, "user", users)
 	}
-	options, err := a.usageOptionsResponse(r.Context(), user, filters.Scope)
+	options, err := a.usageOptionsResponse(r.Context(), user, usageOptionFilters(filters))
 	if err != nil {
 		return err
 	}
@@ -438,8 +438,8 @@ func (a *App) usageRecordDetail(w http.ResponseWriter, r *http.Request, recordID
 	return nil
 }
 
-func (a *App) usageOptions(w http.ResponseWriter, r *http.Request, user *AuthUser) error {
-	response, err := a.usageOptionsResponse(r.Context(), user, r.URL.Query().Get("scope"))
+func (a *App) usageOptions(w http.ResponseWriter, r *http.Request, filters UsageFilters, user *AuthUser) error {
+	response, err := a.usageOptionsResponse(r.Context(), user, usageOptionFilters(filters))
 	if err != nil {
 		return err
 	}
@@ -447,27 +447,24 @@ func (a *App) usageOptions(w http.ResponseWriter, r *http.Request, user *AuthUse
 	return nil
 }
 
-func (a *App) usageOptionsResponse(ctx context.Context, user *AuthUser, requestedScope string) (map[string]any, error) {
-	scope := accessScope(user, requestedScope)
+func usageOptionFilters(filters UsageFilters) UsageFilters {
+	return normalizedUsageFilters(UsageFilters{
+		Scope: filters.Scope,
+		Start: filters.Start,
+		End:   filters.End,
+	})
+}
+
+func (a *App) usageOptionsResponse(ctx context.Context, user *AuthUser, filters UsageFilters) (map[string]any, error) {
+	scope := accessScope(user, filters.Scope)
+	scoped, err := a.scopedFilters(ctx, filters, scope)
+	if err != nil {
+		return nil, err
+	}
+	where, args := usageWhere(scoped)
 	users := []map[string]any{}
-	if scope.IsAdmin {
-		userRows, err := a.allUsers(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, row := range userRows {
-			id := row.ID
-			users = append(users, rankingItem(strconv.Itoa(id), displayUserName(row), 0, 0, 0, 0, &id, nil))
-		}
-	}
-	where := ""
-	args := []any{}
-	if !scope.IsAdmin {
-		where = "WHERE usage_username = ?"
-		args = append(args, scope.Username)
-	}
 	distinctStrings := func(column string) ([]string, error) {
-		rows, err := a.db.QueryContext(ctx, fmt.Sprintf(`SELECT DISTINCT %s FROM usage_records %s AND %s IS NOT NULL`, column, normalizeWhere(where), column), args...)
+		rows, err := a.db.QueryContext(ctx, fmt.Sprintf(`SELECT DISTINCT %s FROM usage_records %s AND %s IS NOT NULL`, column, where, column), args...)
 		if err != nil {
 			return nil, err
 		}
@@ -484,6 +481,22 @@ func (a *App) usageOptionsResponse(ctx context.Context, user *AuthUser, requeste
 		}
 		sort.Strings(values)
 		return values, rows.Err()
+	}
+	if scope.IsAdmin {
+		usernames, err := distinctStrings("usage_username")
+		if err != nil {
+			return nil, err
+		}
+		userLookup, err := a.userLookup(ctx, scope)
+		if err != nil {
+			return nil, err
+		}
+		for _, username := range usernames {
+			if info, ok := userLookup[username]; ok {
+				id := info.ID
+				users = append(users, rankingItem(strconv.Itoa(id), info.Name, 0, 0, 0, 0, &id, nil))
+			}
+		}
 	}
 	providers, err := distinctStrings("provider")
 	if err != nil {
@@ -513,13 +526,6 @@ func (a *App) usageOptionsResponse(ctx context.Context, user *AuthUser, requeste
 		"models":               models,
 		"endpoints":            endpoints,
 	}, nil
-}
-
-func normalizeWhere(where string) string {
-	if strings.TrimSpace(where) == "" {
-		return "WHERE 1 = 1"
-	}
-	return where
 }
 
 func parsePositiveInt(value string, fallback int) int {

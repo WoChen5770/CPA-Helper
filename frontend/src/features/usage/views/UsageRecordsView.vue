@@ -434,7 +434,7 @@ async function refresh({ resetPage = false, silent = false }: RefreshOptions = {
     const usedServerDefaultRange = filters.start === undefined && filters.end === undefined
     const [recordsResult, optionsResult] = await Promise.allSettled([
       getUsageRecords(filters, page.value, pageSize.value),
-      getUsageOptions(props.scope),
+      getUsageOptions(filters),
     ])
     if (recordsResult.status === 'rejected') {
       throw recordsResult.reason

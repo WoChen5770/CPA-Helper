@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -37,6 +38,23 @@ type usageOverviewDistributionsResponse struct {
 	Distributions struct {
 		Models []usageDistributionItem `json:"models"`
 	} `json:"distributions"`
+}
+
+type usageOptionsTestResponse struct {
+	Users []struct {
+		Label  string `json:"label"`
+		UserID *int   `json:"user_id"`
+	} `json:"users"`
+	APIKeyDescriptions []struct {
+		Key string `json:"key"`
+	} `json:"api_key_descriptions"`
+	Providers []string `json:"providers"`
+	Models    []string `json:"models"`
+	Endpoints []string `json:"endpoints"`
+}
+
+type usageOverviewOptionsResponse struct {
+	Options usageOptionsTestResponse `json:"options"`
 }
 
 type usageDistributionItem struct {
@@ -116,6 +134,83 @@ func TestUsageOverviewIncludesModelDistribution(t *testing.T) {
 	if item.Records != 1 || item.TotalTokens != 12 {
 		t.Fatalf("model distribution totals = records %d tokens %d, want 1 and 12", item.Records, item.TotalTokens)
 	}
+}
+
+func TestUsageOptionsRespectDateRange(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("CPA_HELPER_DATA_DIR", dataDir)
+
+	app, err := backendApp.New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+
+	handler := app.Routes()
+	cookies := requestJSON(t, handler, http.MethodPost, "/api/auth/setup", map[string]any{
+		"username": "admin",
+		"password": "test-password",
+		"nickname": "Admin",
+	}, nil, nil)
+	requestJSON(t, handler, http.MethodPost, "/api/users", map[string]any{
+		"username": "member",
+		"password": "member-password",
+		"nickname": "Member",
+		"is_admin": false,
+	}, cookies, nil)
+
+	seedUsageRecordWithValues(t, dataDir, usageRecordSeed{
+		Timestamp:         "2026-05-16T16:37:00+08:00",
+		Username:          "admin",
+		APIKeyDescription: "VSCode",
+		Provider:          "openai",
+		Model:             "gpt-5.5",
+		Endpoint:          "/v1/chat/completions",
+		Source:            "code10001",
+		RequestID:         "req-time-options-inside",
+		Auth:              "bearer",
+		DedupeKey:         "time-options-inside",
+		RawJSON:           `{"request_id":"req-time-options-inside"}`,
+		InputTokens:       10,
+		OutputTokens:      2,
+		TotalTokens:       12,
+	})
+	seedUsageRecordWithValues(t, dataDir, usageRecordSeed{
+		Timestamp:         "2026-05-18T16:37:00+08:00",
+		Username:          "member",
+		APIKeyDescription: "Minis",
+		Provider:          "claude",
+		Model:             "claude-sonnet-4",
+		Endpoint:          "/v1/messages",
+		Source:            "code10002",
+		RequestID:         "req-time-options-outside",
+		Auth:              "bearer",
+		DedupeKey:         "time-options-outside",
+		RawJSON:           `{"request_id":"req-time-options-outside"}`,
+		InputTokens:       10,
+		OutputTokens:      2,
+		TotalTokens:       12,
+	})
+
+	const optionsPath = "/api/usage/options?scope=admin&start=2026-05-16T00:00:00&end=2026-05-17T00:00:00"
+	options := usageOptionsTestResponse{}
+	requestJSON(t, handler, http.MethodGet, optionsPath, nil, cookies, &options)
+	assertStringSlice(t, options.Providers, []string{"openai"})
+	assertStringSlice(t, options.Models, []string{"gpt-5.5"})
+	assertStringSlice(t, options.Endpoints, []string{"/v1/chat/completions"})
+	if len(options.APIKeyDescriptions) != 1 || options.APIKeyDescriptions[0].Key != "VSCode" {
+		t.Fatalf("api key description options = %#v, want only VSCode", options.APIKeyDescriptions)
+	}
+	if len(options.Users) != 1 || options.Users[0].Label != "Admin" || options.Users[0].UserID == nil {
+		t.Fatalf("user options = %#v, want only Admin", options.Users)
+	}
+
+	const overviewPath = "/api/usage/overview?scope=admin&start=2026-05-16T00:00:00&end=2026-05-17T00:00:00"
+	overview := usageOverviewOptionsResponse{}
+	requestJSON(t, handler, http.MethodGet, overviewPath, nil, cookies, &overview)
+	assertStringSlice(t, overview.Options.Providers, []string{"openai"})
+	assertStringSlice(t, overview.Options.Models, []string{"gpt-5.5"})
+	assertStringSlice(t, overview.Options.Endpoints, []string{"/v1/chat/completions"})
 }
 
 func TestUsageResponsesRedactAPIKeySourceWithoutChangingStoredRecord(t *testing.T) {
@@ -311,16 +406,20 @@ func TestUsageRecordDetailRedactsAccountSourceForNonAdminOnly(t *testing.T) {
 }
 
 type usageRecordSeed struct {
-	Timestamp    string
-	Username     string
-	Source       string
-	RequestID    string
-	Auth         string
-	DedupeKey    string
-	RawJSON      string
-	InputTokens  int
-	OutputTokens int
-	TotalTokens  int
+	Timestamp         string
+	Username          string
+	APIKeyDescription string
+	Provider          string
+	Model             string
+	Endpoint          string
+	Source            string
+	RequestID         string
+	Auth              string
+	DedupeKey         string
+	RawJSON           string
+	InputTokens       int
+	OutputTokens      int
+	TotalTokens       int
 }
 
 func seedUsageRecord(t *testing.T, dataDir string, timestamp string) {
@@ -345,16 +444,19 @@ func seedUsageRecordWithValues(t *testing.T, dataDir string, seed usageRecordSee
 	db := openUsageTestDB(t, dataDir)
 	defer db.Close()
 
+	description := valueOrDefault(seed.APIKeyDescription, "VSCode")
+	provider := valueOrDefault(seed.Provider, "openai")
+	model := valueOrDefault(seed.Model, "gpt-5.5")
+	endpoint := valueOrDefault(seed.Endpoint, "/v1/chat/completions")
 	result, err := db.Exec(`
 		INSERT INTO usage_records (
 			created_at, timestamp, usage_username, api_key_description, provider, model,
 			endpoint, source, request_id, auth, latency_ms, failed, input_tokens,
 			output_tokens, cached_tokens, reasoning_tokens, total_tokens, dedupe_key, raw_json
 		) VALUES (
-			?, ?, ?, 'VSCode', 'openai', 'gpt-5.5', '/v1/chat/completions',
-			?, ?, ?, 1000, 0, ?, ?, 0, 0, ?, ?, ?
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1000, 0, ?, ?, 0, 0, ?, ?, ?
 		)
-	`, seed.Timestamp, seed.Timestamp, seed.Username, seed.Source, seed.RequestID, seed.Auth, seed.InputTokens, seed.OutputTokens, seed.TotalTokens, seed.DedupeKey, seed.RawJSON)
+	`, seed.Timestamp, seed.Timestamp, seed.Username, description, provider, model, endpoint, seed.Source, seed.RequestID, seed.Auth, seed.InputTokens, seed.OutputTokens, seed.TotalTokens, seed.DedupeKey, seed.RawJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,6 +465,20 @@ func seedUsageRecordWithValues(t *testing.T, dataDir string, seed usageRecordSee
 		t.Fatal(err)
 	}
 	return int(id)
+}
+
+func valueOrDefault(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func assertStringSlice(t *testing.T, got, want []string) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("string slice = %#v, want %#v", got, want)
+	}
 }
 
 func storedUsageSourceAndRawJSON(t *testing.T, dataDir string, id int) (string, string) {

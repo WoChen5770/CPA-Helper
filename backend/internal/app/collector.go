@@ -270,6 +270,69 @@ func (r *CollectorRunner) updateState(ctx context.Context, patch collectorPatch)
 }
 
 func consumeRespQueue(ctx context.Context, cfg CollectorConfig) ([]string, error) {
+	if !usesRespQueueProtocol(cfg.CLIProxyURL) {
+		return consumeHTTPUsageQueue(ctx, cfg)
+	}
+	return consumeRespQueueOverTCP(ctx, cfg)
+}
+
+func usesRespQueueProtocol(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "redis", "resp", "tcp":
+		return true
+	default:
+		return false
+	}
+}
+
+func consumeHTTPUsageQueue(ctx context.Context, cfg CollectorConfig) ([]string, error) {
+	query := url.Values{}
+	query.Set("count", strconv.Itoa(cfg.BatchSize))
+	response, payload, err := doJSON(
+		ctx,
+		httpClient(8*time.Second),
+		http.MethodGet,
+		makeURL(cfg.CLIProxyURL, "/v0/management/usage-queue", query),
+		managementHeaders(cfg.ManagementKey),
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("usage queue HTTP %d", response.StatusCode)
+	}
+	return decodeHTTPQueuePayload(payload)
+}
+
+func decodeHTTPQueuePayload(payload []byte) ([]string, error) {
+	var rawItems []json.RawMessage
+	if err := json.Unmarshal(payload, &rawItems); err != nil {
+		return nil, err
+	}
+	items := make([]string, 0, len(rawItems))
+	for _, rawItem := range rawItems {
+		trimmed := strings.TrimSpace(string(rawItem))
+		if trimmed == "" || trimmed == "null" {
+			continue
+		}
+		var text string
+		if err := json.Unmarshal(rawItem, &text); err == nil {
+			if normalized := strings.TrimSpace(text); normalized != "" {
+				items = append(items, normalized)
+			}
+			continue
+		}
+		items = append(items, string(rawItem))
+	}
+	return items, nil
+}
+
+func consumeRespQueueOverTCP(ctx context.Context, cfg CollectorConfig) ([]string, error) {
 	parsed, err := url.Parse(cfg.CLIProxyURL)
 	if err != nil {
 		return nil, err

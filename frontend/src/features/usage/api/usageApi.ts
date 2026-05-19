@@ -75,6 +75,14 @@ export function getUsageRecord(
   return apiClient.get<UsageRecordDetail>(`/usage/records/${recordId}`, { scope })
 }
 
-export function getUsageOptions(scope?: UsageFilters['scope']): Promise<UsageOptionsResponse> {
-  return apiClient.get<UsageOptionsResponse>('/usage/options', { scope })
+type UsageOptionsFilters = Pick<UsageFilters, 'scope' | 'start' | 'end'>
+
+export function getUsageOptions(
+  filters: UsageOptionsFilters = {},
+): Promise<UsageOptionsResponse> {
+  return apiClient.get<UsageOptionsResponse>('/usage/options', {
+    scope: filters.scope,
+    start: filters.start,
+    end: filters.end,
+  })
 }
