@@ -27,7 +27,6 @@ const (
 	keeperLogRetainedFiles         = 3
 	keeperMaxInMemoryLogs          = 300
 	keeperQuotaWindowUsageCacheTTL = 30 * time.Second
-	keeperQuotaWindowStartGrace    = 60 * time.Second
 	keeperFiveHourWindowSeconds    = 5 * 60 * 60
 	keeperWeekWindowSeconds        = 7 * 24 * 60 * 60
 )
@@ -174,7 +173,6 @@ type keeperQuotaWindowUsage struct {
 	WindowEnd        time.Time
 	ResetAt          time.Time
 	WindowSeconds    int
-	StartGrace       time.Duration
 	Records          int
 	SuccessRecords   int
 	FailedRecords    int
@@ -1179,7 +1177,7 @@ func (a *App) computeKeeperQuotaWindowUsages(ctx context.Context, accounts []kee
 	}
 
 	queryStart := minStart
-	maxLookbackStart := now.Add(-time.Duration(keeperWeekWindowSeconds)*time.Second - keeperQuotaWindowStartGrace)
+	maxLookbackStart := now.Add(-time.Duration(keeperWeekWindowSeconds) * time.Second)
 	if queryStart.Before(maxLookbackStart) {
 		queryStart = maxLookbackStart
 	}
@@ -1223,11 +1221,9 @@ func keeperQuotaWindowForAccount(account keeperAccount, primary bool, now time.T
 	}
 	resetAt := account.PrimaryResetAt
 	windowSeconds := account.PrimaryWindowSeconds
-	usedPercent := account.PrimaryUsedPercent
 	if !primary {
 		resetAt = account.SecondaryResetAt
 		windowSeconds = account.SecondaryWindowSeconds
-		usedPercent = account.SecondaryUsedPercent
 	}
 	if resetAt == nil {
 		return nil
@@ -1243,17 +1239,9 @@ func keeperQuotaWindowForAccount(account keeperAccount, primary bool, now time.T
 		WindowEnd:     windowEnd,
 		ResetAt:       windowEnd,
 		WindowSeconds: seconds,
-		StartGrace:    keeperQuotaWindowStartGraceForUsage(usedPercent),
 		Stale:         !now.Before(windowEnd),
 		WindowSource:  source,
 	}
-}
-
-func keeperQuotaWindowStartGraceForUsage(usedPercent *int) time.Duration {
-	if usedPercent != nil && *usedPercent >= 100 {
-		return keeperQuotaWindowStartGrace
-	}
-	return 0
 }
 
 func keeperQuotaWindowSeconds(accountType *string, saved *int, primary bool) (int, string, bool) {
@@ -1285,9 +1273,8 @@ func keeperQuotaWindowBounds(minStart, maxEnd time.Time, usage *keeperQuotaWindo
 	if usage == nil {
 		return minStart, maxEnd
 	}
-	windowStart := usage.WindowStart.Add(-usage.StartGrace)
-	if minStart.IsZero() || windowStart.Before(minStart) {
-		minStart = windowStart
+	if minStart.IsZero() || usage.WindowStart.Before(minStart) {
+		minStart = usage.WindowStart
 	}
 	if maxEnd.IsZero() || usage.WindowEnd.After(maxEnd) {
 		maxEnd = usage.WindowEnd
@@ -1388,8 +1375,7 @@ func keeperRecordInQuotaWindow(record UsageRecord, usage *keeperQuotaWindowUsage
 	if usage == nil {
 		return false
 	}
-	start := usage.WindowStart.Add(-usage.StartGrace)
-	return !record.Timestamp.Before(start) && record.Timestamp.Before(usage.WindowEnd)
+	return !record.Timestamp.Before(usage.WindowStart) && record.Timestamp.Before(usage.WindowEnd)
 }
 
 func addRecordToKeeperQuotaWindowUsage(usage *keeperQuotaWindowUsage, record UsageRecord, prices map[[2]string]ModelPrice) {

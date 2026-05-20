@@ -329,7 +329,7 @@ func TestKeeperQuotaWindowUsageUsesCurrentWindowBoundariesAndPricing(t *testing.
 		RawJSON:      `{"source":"priced@example.com"}`,
 	})
 	insertKeeperWindowUsageRecord(t, app, keeperWindowUsageSeed{
-		Dedupe:       "start-grace",
+		Dedupe:       "near-before-start",
 		Timestamp:    windowStart.Add(-3 * time.Second),
 		Source:       "priced@example.com",
 		InputTokens:  4,
@@ -355,7 +355,7 @@ func TestKeeperQuotaWindowUsageUsesCurrentWindowBoundariesAndPricing(t *testing.
 	})
 	insertKeeperWindowUsageRecord(t, app, keeperWindowUsageSeed{
 		Dedupe:       "before-start",
-		Timestamp:    windowStart.Add(-keeperQuotaWindowStartGrace - time.Second),
+		Timestamp:    windowStart.Add(-time.Minute),
 		Source:       "priced@example.com",
 		InputTokens:  100,
 		OutputTokens: 100,
@@ -370,21 +370,21 @@ func TestKeeperQuotaWindowUsageUsesCurrentWindowBoundariesAndPricing(t *testing.
 	if usage == nil {
 		t.Fatal("primary window usage is nil")
 	}
-	if usage.Records != 3 || usage.SuccessRecords != 2 || usage.FailedRecords != 1 {
-		t.Fatalf("records = %d/%d/%d, want 3/2/1", usage.Records, usage.SuccessRecords, usage.FailedRecords)
+	if usage.Records != 2 || usage.SuccessRecords != 1 || usage.FailedRecords != 1 {
+		t.Fatalf("records = %d/%d/%d, want 2/1/1", usage.Records, usage.SuccessRecords, usage.FailedRecords)
 	}
-	if usage.InputTokens != 34 || usage.OutputTokens != 16 || usage.TotalTokens != 50 {
-		t.Fatalf("tokens = input %d output %d total %d, want 34/16/50", usage.InputTokens, usage.OutputTokens, usage.TotalTokens)
+	if usage.InputTokens != 30 || usage.OutputTokens != 15 || usage.TotalTokens != 45 {
+		t.Fatalf("tokens = input %d output %d total %d, want 30/15/45", usage.InputTokens, usage.OutputTokens, usage.TotalTokens)
 	}
-	if math.Abs(usage.EstimatedCostUSD-0.000066) > 0.00000001 {
-		t.Fatalf("estimated cost = %.8f, want 0.00006600", usage.EstimatedCostUSD)
+	if math.Abs(usage.EstimatedCostUSD-0.00006) > 0.00000001 {
+		t.Fatalf("estimated cost = %.8f, want 0.00006000", usage.EstimatedCostUSD)
 	}
 	if usage.UnpricedRecords != 0 {
 		t.Fatalf("unpriced records = %d, want 0", usage.UnpricedRecords)
 	}
 }
 
-func TestKeeperQuotaWindowUsageDoesNotApplyStartGraceWhenQuotaNotFull(t *testing.T) {
+func TestKeeperQuotaWindowUsageExcludesPreviousCycleWhenQuotaNotFull(t *testing.T) {
 	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
 	app, err := New()
 	if err != nil {
