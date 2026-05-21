@@ -1800,6 +1800,31 @@ func (a *App) conditionalKeeperRefreshCandidates(ctx context.Context, cfg AppCon
 		return nil, err
 	}
 
+	rows, err = a.db.QueryContext(ctx, `
+		SELECT auth_name
+		FROM codex_keeper_auth_states
+		WHERE last_error IS NOT NULL
+		  AND TRIM(last_error) <> ''
+		ORDER BY auth_name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		addName(name)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	filtered, _, err := a.filterKeeperCachedAuthNames(ctx, names, cfg)
 	return filtered, err
 }

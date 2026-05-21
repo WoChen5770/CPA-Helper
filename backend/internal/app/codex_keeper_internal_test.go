@@ -128,6 +128,9 @@ func TestConditionalKeeperRefreshCandidatesUseUsageQuotaAndCache(t *testing.T) {
 					{"name": "quota-due.json", "type": "codex"},
 					{"name": "quota-future.json", "type": "codex"},
 					{"name": "quota-cached.json", "type": "codex"},
+					{"name": "error-due.json", "type": "codex"},
+					{"name": "error-cached.json", "type": "codex"},
+					{"name": "normal-local.json", "type": "codex"},
 				},
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files/download":
@@ -165,6 +168,9 @@ func TestConditionalKeeperRefreshCandidatesUseUsageQuotaAndCache(t *testing.T) {
 	insertKeeperStateForCandidate(t, app, "quota-due.json", timePtrValue(now.Add(-time.Minute)), nil)
 	insertKeeperStateForCandidate(t, app, "quota-future.json", timePtrValue(now.Add(time.Minute)), nil)
 	insertKeeperStateForCandidate(t, app, "quota-cached.json", timePtrValue(now.Add(-time.Minute)), timePtrValue(now.Add(-2*time.Minute)))
+	insertKeeperStateForCandidateWithError(t, app, "error-due.json", "network check failed", timePtrValue(now.Add(-20*time.Minute)))
+	insertKeeperStateForCandidateWithError(t, app, "error-cached.json", "network check failed", timePtrValue(now.Add(-2*time.Minute)))
+	insertKeeperStateForCandidate(t, app, "normal-local.json", nil, timePtrValue(now.Add(-20*time.Minute)))
 
 	names, err := app.conditionalKeeperRefreshCandidates(ctx, cfg)
 	if err != nil {
@@ -178,6 +184,7 @@ func TestConditionalKeeperRefreshCandidatesUseUsageQuotaAndCache(t *testing.T) {
 		"remote-list-email.json",
 		"remote-short-index.json",
 		"quota-due.json",
+		"error-due.json",
 	})
 }
 
@@ -1001,6 +1008,19 @@ func insertKeeperStateForCandidateWithEmail(t *testing.T, app *App, name string,
 	`, name, email, dbTimePtr(primaryResetAt), dbTimePtr(lastCheckedAt), now, now)
 	if err != nil {
 		t.Fatalf("insert keeper state %s: %v", name, err)
+	}
+}
+
+func insertKeeperStateForCandidateWithError(t *testing.T, app *App, name string, lastError string, lastCheckedAt *time.Time) {
+	t.Helper()
+	insertKeeperStateForCandidate(t, app, name, nil, lastCheckedAt)
+	_, err := app.db.Exec(`
+		UPDATE codex_keeper_auth_states
+		SET last_error = ?, updated_at = ?
+		WHERE auth_name = ?
+	`, lastError, dbTime(time.Now().In(appTimeLocation)), name)
+	if err != nil {
+		t.Fatalf("mark keeper state %s error: %v", name, err)
 	}
 }
 
