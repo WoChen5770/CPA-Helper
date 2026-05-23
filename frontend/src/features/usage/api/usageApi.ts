@@ -22,6 +22,7 @@ function filtersToParams(
     api_key_description: filters.api_key_description,
     provider: filters.provider,
     model: filters.model,
+    source_key: filters.source_key,
     endpoint: filters.endpoint,
     failed: filters.failed,
     request_id: filters.request_id,

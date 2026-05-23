@@ -109,6 +109,7 @@ const options = ref<UsageOptionsResponse>({
   api_key_descriptions: [],
   providers: [],
   models: [],
+  sources: [],
   endpoints: [],
 })
 
@@ -171,6 +172,7 @@ const filterForm = reactive({
     typeof route.query.api_key_description === 'string' ? route.query.api_key_description : null,
   provider: typeof route.query.provider === 'string' ? route.query.provider : null,
   model: typeof route.query.model === 'string' ? route.query.model : null,
+  source_key: typeof route.query.source_key === 'string' ? route.query.source_key : null,
   endpoint: typeof route.query.endpoint === 'string' ? route.query.endpoint : null,
   failed: failedFromQuery(),
 })
@@ -234,6 +236,7 @@ function fallbackOptionsFromRecords(items: UsageRecordListItem[]): UsageOptionsR
     api_key_descriptions: [...apiKeyDescriptions.values()],
     providers: [...providers].sort(),
     models: [...models].sort(),
+    sources: [],
     endpoints: [...endpoints].sort(),
   }
 }
@@ -250,6 +253,7 @@ function normalizeUsageOptions(
       : fallback.api_key_descriptions,
     providers: nextOptions?.providers?.length ? nextOptions.providers : fallback.providers,
     models: nextOptions?.models?.length ? nextOptions.models : fallback.models,
+    sources: nextOptions?.sources ?? fallback.sources,
     endpoints: nextOptions?.endpoints?.length ? nextOptions.endpoints : fallback.endpoints,
   }
 }
@@ -264,6 +268,7 @@ const selectOptions = computed(() => ({
   })),
   providers: options.value.providers.map((item) => ({ label: item, value: item })),
   models: options.value.models.map((item) => ({ label: item, value: item })),
+  sources: options.value.sources.map((item) => ({ label: item.label, value: item.key })),
   endpoints: options.value.endpoints.map((item) => ({ label: item, value: item })),
 }))
 
@@ -322,6 +327,7 @@ function buildFilters(): UsageFilters {
     api_key_description: filterForm.api_key_description ?? undefined,
     provider: filterForm.provider ?? undefined,
     model: filterForm.model ?? undefined,
+    source_key: isAccountScope.value ? undefined : (filterForm.source_key ?? undefined),
     endpoint: filterForm.endpoint ?? undefined,
     failed,
   }
@@ -415,6 +421,11 @@ function handleModelChange(value: unknown) {
   refreshAfterFilterChange()
 }
 
+function handleSourceChange(value: unknown) {
+  filterForm.source_key = normalizeSelectValue(value)
+  refreshAfterFilterChange()
+}
+
 function handleEndpointChange(value: unknown) {
   filterForm.endpoint = normalizeSelectValue(value)
   refreshAfterFilterChange()
@@ -464,7 +475,7 @@ async function refresh({ resetPage = false, silent = false }: RefreshOptions = {
     const usedServerDefaultRange = filters.start === undefined && filters.end === undefined
     const [recordsResult, optionsResult] = await Promise.allSettled([
       getUsageRecords(filters, page.value, pageSize.value),
-      getUsageOptions(filters),
+      silent ? Promise.resolve(null) : getUsageOptions(filters),
     ])
     if (recordsResult.status === 'rejected') {
       throw recordsResult.reason
@@ -473,7 +484,9 @@ async function refresh({ resetPage = false, silent = false }: RefreshOptions = {
     const nextOptions = optionsResult.status === 'fulfilled' ? optionsResult.value : null
     records.value = nextRecords.items
     total.value = nextRecords.total
-    options.value = normalizeUsageOptions(nextOptions, nextRecords.items)
+    if (!silent) {
+      options.value = normalizeUsageOptions(nextOptions, nextRecords.items)
+    }
     if (usedServerDefaultRange) {
       dateRange.value = [new Date(nextRecords.start).getTime(), new Date(nextRecords.end).getTime()]
     }
@@ -896,6 +909,15 @@ onBeforeUnmount(() => {
             @update:value="handleModelChange"
           />
           <NSelect
+            v-if="!isAccountScope"
+            :value="filterForm.source_key"
+            :options="selectOptions.sources"
+            clearable
+            filterable
+            placeholder="来源"
+            @update:value="handleSourceChange"
+          />
+          <NSelect
             :value="filterForm.endpoint"
             :options="selectOptions.endpoints"
             clearable
@@ -1040,7 +1062,7 @@ onBeforeUnmount(() => {
 
 .field-row {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr)) auto;
+  grid-template-columns: repeat(6, minmax(120px, 1fr)) auto;
   gap: 10px;
   align-items: end;
   min-width: 0;

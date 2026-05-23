@@ -2125,7 +2125,7 @@ onBeforeUnmount(() => {
                 'is-disabled': account.disabled,
                 'is-enabled': !account.disabled,
                 'has-error': hasAccountError(account),
-                'is-quota-exhausted': accountPriority(account) === -1,
+                'is-quota-exhausted': !account.disabled && accountPriority(account) === -1,
                 'is-select-mode': refreshSelectMode,
                 'is-selected': isRefreshAccountSelected(account),
               }"

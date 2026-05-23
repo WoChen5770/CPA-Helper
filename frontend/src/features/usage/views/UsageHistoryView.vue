@@ -130,6 +130,7 @@ const options = ref<UsageOptionsResponse>({
   api_key_descriptions: [],
   providers: [],
   models: [],
+  sources: [],
   endpoints: [],
 })
 
@@ -139,6 +140,7 @@ function normalizeUsageOptions(nextOptions: UsageOptionsResponse): UsageOptionsR
     api_key_descriptions: nextOptions.api_key_descriptions ?? [],
     providers: nextOptions.providers ?? [],
     models: nextOptions.models ?? [],
+    sources: nextOptions.sources ?? [],
     endpoints: nextOptions.endpoints ?? [],
   }
 }

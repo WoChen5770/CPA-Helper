@@ -229,6 +229,7 @@ export interface UsageFilters {
   api_key_description?: string | undefined
   provider?: string | undefined
   model?: string | undefined
+  source_key?: string | undefined
   endpoint?: string | undefined
   failed?: boolean | undefined
   request_id?: string | undefined
@@ -292,7 +293,13 @@ export interface UsageOptionsResponse {
   api_key_descriptions: RankingItem[]
   providers: string[]
   models: string[]
+  sources: UsageSourceOption[]
   endpoints: string[]
+}
+
+export interface UsageSourceOption {
+  key: string
+  label: string
 }
 
 export interface UsageOverviewResponse {

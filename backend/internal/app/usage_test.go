@@ -1,7 +1,9 @@
 package app_test
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"net/http"
 	"path/filepath"
 	"reflect"
@@ -50,6 +52,10 @@ type usageOptionsTestResponse struct {
 	} `json:"api_key_descriptions"`
 	Providers []string `json:"providers"`
 	Models    []string `json:"models"`
+	Sources   []struct {
+		Key   string `json:"key"`
+		Label string `json:"label"`
+	} `json:"sources"`
 	Endpoints []string `json:"endpoints"`
 }
 
@@ -197,6 +203,9 @@ func TestUsageOptionsRespectDateRange(t *testing.T) {
 	requestJSON(t, handler, http.MethodGet, optionsPath, nil, cookies, &options)
 	assertStringSlice(t, options.Providers, []string{"openai"})
 	assertStringSlice(t, options.Models, []string{"gpt-5.5"})
+	if len(options.Sources) != 1 || options.Sources[0].Label != "code10001" || options.Sources[0].Key != sourceKeyForTest("code10001") {
+		t.Fatalf("source options = %#v, want only code10001", options.Sources)
+	}
 	assertStringSlice(t, options.Endpoints, []string{"/v1/chat/completions"})
 	if len(options.APIKeyDescriptions) != 1 || options.APIKeyDescriptions[0].Key != "VSCode" {
 		t.Fatalf("api key description options = %#v, want only VSCode", options.APIKeyDescriptions)
@@ -210,7 +219,62 @@ func TestUsageOptionsRespectDateRange(t *testing.T) {
 	requestJSON(t, handler, http.MethodGet, overviewPath, nil, cookies, &overview)
 	assertStringSlice(t, overview.Options.Providers, []string{"openai"})
 	assertStringSlice(t, overview.Options.Models, []string{"gpt-5.5"})
+	if len(overview.Options.Sources) != 1 || overview.Options.Sources[0].Label != "code10001" || overview.Options.Sources[0].Key != sourceKeyForTest("code10001") {
+		t.Fatalf("overview source options = %#v, want only code10001", overview.Options.Sources)
+	}
 	assertStringSlice(t, overview.Options.Endpoints, []string{"/v1/chat/completions"})
+}
+
+func TestUsageRecordsFilterBySourceForAdmin(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("CPA_HELPER_DATA_DIR", dataDir)
+
+	app, err := backendApp.New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+
+	handler := app.Routes()
+	cookies := requestJSON(t, handler, http.MethodPost, "/api/auth/setup", map[string]any{
+		"username": "admin",
+		"password": "test-password",
+		"nickname": "Admin",
+	}, nil, nil)
+
+	seedUsageRecordWithValues(t, dataDir, usageRecordSeed{
+		Timestamp:    "2026-05-16T16:37:00+08:00",
+		Username:     "admin",
+		Source:       "vscode-source",
+		RequestID:    "req-source-filter-a",
+		Auth:         "bearer",
+		DedupeKey:    "source-filter-a",
+		RawJSON:      `{"request_id":"req-source-filter-a"}`,
+		InputTokens:  10,
+		OutputTokens: 2,
+		TotalTokens:  12,
+	})
+	seedUsageRecordWithValues(t, dataDir, usageRecordSeed{
+		Timestamp:    "2026-05-16T16:38:00+08:00",
+		Username:     "admin",
+		Source:       "browser-source",
+		RequestID:    "req-source-filter-b",
+		Auth:         "bearer",
+		DedupeKey:    "source-filter-b",
+		RawJSON:      `{"request_id":"req-source-filter-b"}`,
+		InputTokens:  10,
+		OutputTokens: 2,
+		TotalTokens:  12,
+	})
+
+	records := usageRecordsResponse{}
+	requestJSON(t, handler, http.MethodGet, "/api/usage/records?scope=admin&source_key="+sourceKeyForTest("vscode-source")+"&start=2026-05-16T00:00:00&end=2026-05-17T00:00:00&page=1&page_size=10", nil, cookies, &records)
+	if len(records.Items) != 1 {
+		t.Fatalf("usage record count = %d, want 1", len(records.Items))
+	}
+	if records.Items[0].Source != "vscode-source" {
+		t.Fatalf("source-filtered record source = %q, want vscode-source", records.Items[0].Source)
+	}
 }
 
 func TestUsageResponsesRedactAPIKeySourceWithoutChangingStoredRecord(t *testing.T) {
@@ -263,6 +327,14 @@ func TestUsageResponsesRedactAPIKeySourceWithoutChangingStoredRecord(t *testing.
 	}
 	if got, _ := detail.RawJSON["api_key"].(string); got == source || !strings.Contains(got, "...") {
 		t.Fatalf("raw_json.api_key = %q, want masked API key", got)
+	}
+	options := usageOptionsTestResponse{}
+	requestJSON(t, handler, http.MethodGet, "/api/usage/options?scope=admin&start=2026-05-16T00:00:00&end=2026-05-17T00:00:00", nil, cookies, &options)
+	if len(options.Sources) != 1 {
+		t.Fatalf("source options = %#v, want masked API key source", options.Sources)
+	}
+	if options.Sources[0].Key != sourceKeyForTest(source) || options.Sources[0].Label == source || !strings.Contains(options.Sources[0].Label, "...") {
+		t.Fatalf("source option = %#v, want masked API key label with stable source key", options.Sources[0])
 	}
 
 	storedSource, storedRaw := storedUsageSourceAndRawJSON(t, dataDir, id)
@@ -395,6 +467,16 @@ func TestUsageRecordDetailRedactsAccountSourceForNonAdminOnly(t *testing.T) {
 	if memberRecords.Items[0].AuthIndex == nil || *memberRecords.Items[0].AuthIndex == authIndex || !strings.Contains(*memberRecords.Items[0].AuthIndex, "...") {
 		t.Fatalf("member list auth_index = %v, want masked auth index", memberRecords.Items[0].AuthIndex)
 	}
+	memberOptions := usageOptionsTestResponse{}
+	requestJSON(t, handler, http.MethodGet, "/api/usage/options?scope=account&start=2026-05-16T00:00:00&end=2026-05-17T00:00:00", nil, memberCookies, &memberOptions)
+	if len(memberOptions.Sources) != 0 {
+		t.Fatalf("member source options = %#v, want hidden sources", memberOptions.Sources)
+	}
+	filteredMemberRecords := usageRecordsResponse{}
+	requestJSON(t, handler, http.MethodGet, "/api/usage/records?scope=account&source_key=not-present&start=2026-05-16T00:00:00&end=2026-05-17T00:00:00&page=1&page_size=1", nil, memberCookies, &filteredMemberRecords)
+	if len(filteredMemberRecords.Items) != 1 {
+		t.Fatalf("member source-filtered usage record count = %d, want source filter ignored", len(filteredMemberRecords.Items))
+	}
 
 	storedSource, storedRaw := storedUsageSourceAndRawJSON(t, dataDir, id)
 	if storedSource != source {
@@ -479,6 +561,11 @@ func assertStringSlice(t *testing.T, got, want []string) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("string slice = %#v, want %#v", got, want)
 	}
+}
+
+func sourceKeyForTest(value string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
+	return hex.EncodeToString(sum[:])
 }
 
 func storedUsageSourceAndRawJSON(t *testing.T, dataDir string, id int) (string, string) {

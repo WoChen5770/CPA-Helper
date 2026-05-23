@@ -27,6 +27,7 @@ type UsageFilters struct {
 	APIKeyDescription *string
 	Provider          *string
 	Model             *string
+	SourceKey         *string
 	Endpoint          *string
 	Failed            *bool
 	RequestID         *string
@@ -172,6 +173,7 @@ func parseUsageFilters(r *http.Request) (UsageFilters, error) {
 	filters.APIKeyDescription = stringPtrFromQuery(query.Get("api_key_description"))
 	filters.Provider = stringPtrFromQuery(query.Get("provider"))
 	filters.Model = stringPtrFromQuery(query.Get("model"))
+	filters.SourceKey = stringPtrFromQuery(query.Get("source_key"))
 	filters.Endpoint = stringPtrFromQuery(query.Get("endpoint"))
 	filters.RequestID = stringPtrFromQuery(query.Get("request_id"))
 	if value := strings.TrimSpace(query.Get("failed")); value != "" {
@@ -232,6 +234,7 @@ func (a *App) scopedFilters(ctx context.Context, filters UsageFilters, scope usa
 	if !scope.IsAdmin {
 		filters.UsageUsername = &scope.Username
 		filters.UserID = &scope.UserID
+		filters.SourceKey = nil
 		return filters, nil
 	}
 	if filters.UserID != nil && filters.UsageUsername == nil {
@@ -482,6 +485,59 @@ func (a *App) usageOptionsResponse(ctx context.Context, user *AuthUser, filters 
 		sort.Strings(values)
 		return values, rows.Err()
 	}
+	distinctSourceOptions := func() ([]map[string]string, error) {
+		rows, err := a.db.QueryContext(ctx, `SELECT DISTINCT source, auth, raw_json FROM usage_records `+where+` AND source IS NOT NULL`, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		type sourceOption struct {
+			Key   string
+			Label string
+		}
+		values := map[string]sourceOption{}
+		for rows.Next() {
+			var source, auth, rawJSON sql.NullString
+			if err := rows.Scan(&source, &auth, &rawJSON); err != nil {
+				return nil, err
+			}
+			sourceValue := strings.TrimSpace(source.String)
+			if !source.Valid || sourceValue == "" {
+				continue
+			}
+			record := UsageRecord{Source: &sourceValue, RawJSON: rawJSON.String}
+			if auth.Valid {
+				record.Auth = &auth.String
+			}
+			displaySource := redactedUsageSource(record.Source, usageRecordAuth(record), usageRedactionOptions{})
+			sourceKey := usageSourceKey(record.Source)
+			if displaySource == nil || sourceKey == nil {
+				continue
+			}
+			existing, ok := values[*sourceKey]
+			if !ok || (existing.Label == sourceValue && *displaySource != sourceValue) {
+				values[*sourceKey] = sourceOption{Key: *sourceKey, Label: *displaySource}
+			}
+		}
+		options := make([]sourceOption, 0, len(values))
+		for _, option := range values {
+			options = append(options, option)
+		}
+		sort.Slice(options, func(i, j int) bool {
+			if options[i].Label == options[j].Label {
+				return options[i].Key < options[j].Key
+			}
+			return options[i].Label < options[j].Label
+		})
+		sources := make([]map[string]string, 0, len(options))
+		for _, option := range options {
+			sources = append(sources, map[string]string{
+				"key":   option.Key,
+				"label": option.Label,
+			})
+		}
+		return sources, rows.Err()
+	}
 	if scope.IsAdmin {
 		usernames, err := distinctStrings("usage_username")
 		if err != nil {
@@ -506,6 +562,13 @@ func (a *App) usageOptionsResponse(ctx context.Context, user *AuthUser, filters 
 	if err != nil {
 		return nil, err
 	}
+	sources := []map[string]string{}
+	if scope.IsAdmin {
+		sources, err = distinctSourceOptions()
+		if err != nil {
+			return nil, err
+		}
+	}
 	endpoints, err := distinctStrings("endpoint")
 	if err != nil {
 		return nil, err
@@ -524,6 +587,7 @@ func (a *App) usageOptionsResponse(ctx context.Context, user *AuthUser, filters 
 		"api_key_descriptions": descriptionItems,
 		"providers":            providers,
 		"models":               models,
+		"sources":              sources,
 		"endpoints":            endpoints,
 	}, nil
 }
@@ -551,10 +615,21 @@ func (a *App) filteredUsageRecords(ctx context.Context, filters UsageFilters, or
 		return nil, err
 	}
 	defer rows.Close()
-	return scanUsageRecords(rows)
+	records, err := scanUsageRecords(rows)
+	if err != nil {
+		return nil, err
+	}
+	return applyUsagePostFilters(records, filters), nil
 }
 
 func (a *App) countUsageRecords(ctx context.Context, filters UsageFilters) (int, error) {
+	if hasUsagePostFilters(filters) {
+		records, err := a.filteredUsageRecords(ctx, filters, "")
+		if err != nil {
+			return 0, err
+		}
+		return len(records), nil
+	}
 	where, args := usageWhere(filters)
 	var total int
 	err := a.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_records `+where, args...).Scan(&total)
@@ -562,6 +637,21 @@ func (a *App) countUsageRecords(ctx context.Context, filters UsageFilters) (int,
 }
 
 func (a *App) pagedUsageRecords(ctx context.Context, filters UsageFilters, page, pageSize int) ([]UsageRecord, error) {
+	if hasUsagePostFilters(filters) {
+		records, err := a.filteredUsageRecords(ctx, filters, "timestamp DESC")
+		if err != nil {
+			return nil, err
+		}
+		start := (page - 1) * pageSize
+		if start >= len(records) {
+			return []UsageRecord{}, nil
+		}
+		end := start + pageSize
+		if end > len(records) {
+			end = len(records)
+		}
+		return records[start:end], nil
+	}
 	where, args := usageWhere(filters)
 	args = append(args, pageSize, (page-1)*pageSize)
 	rows, err := a.db.QueryContext(ctx, `SELECT id, CAST(timestamp AS TEXT), usage_username, api_key_description, provider, model, endpoint, source,
@@ -572,6 +662,27 @@ func (a *App) pagedUsageRecords(ctx context.Context, filters UsageFilters, page,
 	}
 	defer rows.Close()
 	return scanUsageRecords(rows)
+}
+
+func hasUsagePostFilters(filters UsageFilters) bool {
+	return filters.SourceKey != nil
+}
+
+func applyUsagePostFilters(records []UsageRecord, filters UsageFilters) []UsageRecord {
+	if !hasUsagePostFilters(filters) {
+		return records
+	}
+	filtered := records[:0]
+	for _, record := range records {
+		if filters.SourceKey != nil {
+			key := usageSourceKey(record.Source)
+			if key == nil || *key != *filters.SourceKey {
+				continue
+			}
+		}
+		filtered = append(filtered, record)
+	}
+	return filtered
 }
 
 func (a *App) getUsageRecord(ctx context.Context, id int) (UsageRecord, error) {
@@ -1008,6 +1119,19 @@ func redactedUsageSource(source *string, authType *string, redaction usageRedact
 	}
 	masked := maskSecret(source)
 	return &masked
+}
+
+func usageSourceKey(source *string) *string {
+	if source == nil {
+		return nil
+	}
+	normalized := strings.TrimSpace(*source)
+	if normalized == "" {
+		return nil
+	}
+	sum := sha256.Sum256([]byte(normalized))
+	key := hex.EncodeToString(sum[:])
+	return &key
 }
 
 func redactedAuthIndex(authIndex *string, redaction usageRedactionOptions) *string {
