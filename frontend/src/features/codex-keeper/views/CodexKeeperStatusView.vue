@@ -257,7 +257,7 @@ const unauthorizedErrorAccountCount = computed(
   () => accounts.value.filter((account) => account.last_status_code === 401).length,
 )
 const quotaExhaustedAccountCount = computed(
-  () => accounts.value.filter((account) => accountPriority(account) === -1).length,
+  () => accounts.value.filter(isQuotaExhaustedAccount).length,
 )
 const activeFilterCount = computed(
   () =>
@@ -619,7 +619,7 @@ function matchesStatusFilter(account: CodexKeeperAccount, value: AccountStatusFi
     return account.last_status_code === 401
   }
   if (value === 'quotaExhausted') {
-    return accountPriority(account) === -1
+    return isQuotaExhaustedAccount(account)
   }
   return true
 }
@@ -671,6 +671,10 @@ function accountSortMark(key: AccountSortKey): string {
 
 function accountPriority(account: CodexKeeperAccount): number {
   return account.priority ?? 0
+}
+
+function isQuotaExhaustedAccount(account: CodexKeeperAccount): boolean {
+  return !account.disabled && accountPriority(account) === -1
 }
 
 function priorityTypeFilter(accountType: string): PriorityTypeFilter {
@@ -2125,7 +2129,7 @@ onBeforeUnmount(() => {
                 'is-disabled': account.disabled,
                 'is-enabled': !account.disabled,
                 'has-error': hasAccountError(account),
-                'is-quota-exhausted': !account.disabled && accountPriority(account) === -1,
+                'is-quota-exhausted': isQuotaExhaustedAccount(account),
                 'is-select-mode': refreshSelectMode,
                 'is-selected': isRefreshAccountSelected(account),
               }"
@@ -2148,12 +2152,12 @@ onBeforeUnmount(() => {
                     :class="
                       account.disabled
                         ? 'is-danger'
-                        : accountPriority(account) === -1
+                        : isQuotaExhaustedAccount(account)
                           ? 'is-quota-exhausted'
                           : 'is-success'
                     "
                   >
-                    {{ account.disabled ? '已禁用' : accountPriority(account) === -1 ? '额度耗尽' : '启用中' }}
+                    {{ account.disabled ? '已禁用' : isQuotaExhaustedAccount(account) ? '额度耗尽' : '启用中' }}
                   </span>
                   <span
                     v-if="disabledStatusCodeText(account)"
