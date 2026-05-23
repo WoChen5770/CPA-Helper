@@ -2107,6 +2107,7 @@ onBeforeUnmount(() => {
                 'is-disabled': account.disabled,
                 'is-enabled': !account.disabled,
                 'has-error': hasAccountError(account),
+                'is-network-error': !account.disabled && hasAccountError(account),
                 'is-select-mode': refreshSelectMode,
                 'is-selected': isRefreshAccountSelected(account),
               }"
@@ -2749,6 +2750,9 @@ onBeforeUnmount(() => {
 }
 
 .account-card {
+  --account-card-bg: var(--cpa-surface-raised);
+  --account-card-border: var(--cpa-border);
+  --account-card-hover-border: color-mix(in srgb, var(--cpa-primary) 36%, var(--cpa-border));
   display: grid;
   align-content: start;
   gap: 12px;
@@ -2763,23 +2767,41 @@ onBeforeUnmount(() => {
   appearance: none;
   content-visibility: auto;
   contain-intrinsic-size: 220px;
-  background: var(--cpa-surface-raised);
-  border: 1px solid var(--cpa-border);
+  background: var(--account-card-bg);
+  border: 1px solid var(--account-card-border);
   border-radius: var(--cpa-radius);
   box-shadow: var(--cpa-shadow-card), var(--cpa-shadow-hairline);
 }
 
+.account-card.is-enabled {
+  --account-card-bg: color-mix(in srgb, var(--cpa-success-weak) 24%, var(--cpa-surface-raised));
+  --account-card-border: color-mix(in srgb, var(--cpa-success) 14%, var(--cpa-border));
+  --account-card-hover-border: color-mix(in srgb, var(--cpa-success) 26%, var(--cpa-border));
+}
+
+.account-card.is-disabled {
+  --account-card-bg: color-mix(in srgb, var(--cpa-danger-weak) 30%, var(--cpa-surface-raised));
+  --account-card-border: color-mix(in srgb, var(--cpa-danger) 18%, var(--cpa-border));
+  --account-card-hover-border: color-mix(in srgb, var(--cpa-danger) 32%, var(--cpa-border));
+}
+
+.account-card.is-network-error {
+  --account-card-bg: color-mix(in srgb, var(--cpa-warning-weak) 34%, var(--cpa-surface-raised));
+  --account-card-border: color-mix(in srgb, var(--cpa-warning) 20%, var(--cpa-border));
+  --account-card-hover-border: color-mix(in srgb, var(--cpa-warning) 34%, var(--cpa-border));
+}
+
 .account-card:hover {
-  border-color: color-mix(in srgb, var(--cpa-primary) 36%, var(--cpa-border));
+  border-color: var(--account-card-hover-border);
   transform: translateY(-1px);
 }
 
 .account-card.is-select-mode {
-  background: color-mix(in srgb, var(--cpa-primary) 5%, var(--cpa-surface-raised));
+  background: color-mix(in srgb, var(--cpa-primary) 5%, var(--account-card-bg));
 }
 
 .account-card.is-selected {
-  background: color-mix(in srgb, var(--cpa-primary) 12%, var(--cpa-surface-raised));
+  background: color-mix(in srgb, var(--cpa-primary) 12%, var(--account-card-bg));
   border-color: color-mix(in srgb, var(--cpa-primary) 64%, var(--cpa-border));
   box-shadow:
     0 0 0 3px color-mix(in srgb, var(--cpa-primary) 14%, transparent),
@@ -2792,8 +2814,9 @@ onBeforeUnmount(() => {
   outline-offset: 2px;
 }
 
-.account-card.has-error {
-  border-color: color-mix(in srgb, var(--cpa-danger) 42%, var(--cpa-border));
+.account-card.has-error:not(.is-network-error) {
+  --account-card-border: color-mix(in srgb, var(--cpa-danger) 42%, var(--cpa-border));
+  --account-card-hover-border: color-mix(in srgb, var(--cpa-danger) 52%, var(--cpa-border));
 }
 
 .account-card-top {
