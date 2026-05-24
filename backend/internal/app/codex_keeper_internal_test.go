@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -681,6 +682,226 @@ func TestAutomaticKeeperRunCountsCachedBadCredentialState(t *testing.T) {
 	}
 }
 
+func TestAutomaticKeeperRunReenablesRecoverableUnauthorizedDisabledAccount(t *testing.T) {
+	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
+
+	const authName = "recoverable-auto.json"
+	cpa := newKeeperRecoveryTestCPA(t, map[string]map[string]any{
+		authName: keeperRecoveryAuthDetail(authName, true),
+	}, map[string]int{authName: http.StatusOK})
+	defer cpa.Close()
+
+	app, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+	configureKeeperTestCPA(t, app, cpa.URL(), func(cfg *AppConfig) {
+		cfg.CodexKeeper.DryRun = false
+		cfg.CodexKeeper.AccountRefreshCacheMinutes = 10
+	})
+	markKeeperStateRecoverableUnauthorizedDisabled(t, app, authName, timePtrValue(time.Now().In(appTimeLocation).Add(-20*time.Minute)))
+
+	stats, detail, err := app.executeKeeperRunForAccounts(context.Background(), "daemon", nil, func(string) {})
+	if err != nil {
+		t.Fatalf("daemon run: %v", err)
+	}
+	if stats.StatusEnabled != 1 {
+		t.Fatalf("status_enabled = %d, want 1", stats.StatusEnabled)
+	}
+	if !strings.Contains(detail, "恢复启用 1") {
+		t.Fatalf("detail = %q, want recovery count", detail)
+	}
+	assertKeeperRecoveredState(t, app, authName)
+	if got := cpa.statusPatchCount(authName, false); got != 1 {
+		t.Fatalf("enable status patch count = %d, want 1", got)
+	}
+	if got := cpa.usageCallCount(authName); got != 1 {
+		t.Fatalf("usage calls = %d, want 1", got)
+	}
+}
+
+func TestManualKeeperRefreshReenablesRecoverableUnauthorizedDisabledAccount(t *testing.T) {
+	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
+
+	const authName = "recoverable-manual.json"
+	cpa := newKeeperRecoveryTestCPA(t, map[string]map[string]any{
+		authName: keeperRecoveryAuthDetail(authName, true),
+	}, map[string]int{authName: http.StatusOK})
+	defer cpa.Close()
+
+	app, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+	configureKeeperTestCPA(t, app, cpa.URL(), func(cfg *AppConfig) {
+		cfg.CodexKeeper.DryRun = false
+		cfg.CodexKeeper.AccountRefreshCacheMinutes = 10
+	})
+	markKeeperStateRecoverableUnauthorizedDisabled(t, app, authName, timePtrValue(time.Now().In(appTimeLocation)))
+
+	stats, _, err := app.executeKeeperRunForAccounts(context.Background(), "accounts", []string{authName}, func(string) {})
+	if err != nil {
+		t.Fatalf("manual refresh: %v", err)
+	}
+	if stats.StatusEnabled != 1 {
+		t.Fatalf("status_enabled = %d, want 1", stats.StatusEnabled)
+	}
+	assertKeeperRecoveredState(t, app, authName)
+	if got := cpa.statusPatchCount(authName, false); got != 1 {
+		t.Fatalf("enable status patch count = %d, want 1", got)
+	}
+}
+
+func TestConditionalKeeperRefreshSkipsDisabledAccounts(t *testing.T) {
+	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
+
+	const oldRecoverable = "recoverable-conditional.json"
+	const recentRecoverable = "recoverable-cached.json"
+	const manualDisabled = "manual-disabled.json"
+	cpa := newKeeperRecoveryTestCPA(t, map[string]map[string]any{
+		oldRecoverable:    keeperRecoveryAuthDetail(oldRecoverable, true),
+		recentRecoverable: keeperRecoveryAuthDetail(recentRecoverable, true),
+		manualDisabled:    keeperRecoveryAuthDetail(manualDisabled, true),
+	}, map[string]int{
+		oldRecoverable:    http.StatusOK,
+		recentRecoverable: http.StatusOK,
+		manualDisabled:    http.StatusOK,
+	})
+	defer cpa.Close()
+
+	app, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+	configureKeeperTestCPA(t, app, cpa.URL(), func(cfg *AppConfig) {
+		cfg.CodexKeeper.DryRun = false
+		cfg.CodexKeeper.AccountRefreshCacheMinutes = 10
+	})
+	now := time.Now().In(appTimeLocation)
+	markKeeperStateRecoverableUnauthorizedDisabled(t, app, oldRecoverable, timePtrValue(now.Add(-20*time.Minute)))
+	markKeeperStateRecoverableUnauthorizedDisabled(t, app, recentRecoverable, timePtrValue(now.Add(-time.Minute)))
+	insertKeeperStateForCandidate(t, app, manualDisabled, nil, timePtrValue(now.Add(-20*time.Minute)))
+	markKeeperStateDisabled(t, app, manualDisabled)
+
+	cfg, err := app.loadConfig(context.Background())
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	names, err := app.conditionalKeeperRefreshCandidates(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("conditionalKeeperRefreshCandidates: %v", err)
+	}
+	assertStringSet(t, names, nil)
+	assertKeeperStillDisabled(t, app, oldRecoverable)
+	if got := cpa.usageCallCount(recentRecoverable); got != 0 {
+		t.Fatalf("recent recoverable usage calls = %d, want 0 because cache skipped", got)
+	}
+	if got := cpa.usageCallCount(oldRecoverable); got != 0 {
+		t.Fatalf("old recoverable usage calls = %d, want 0 because conditional refresh skips disabled accounts", got)
+	}
+	if got := cpa.usageCallCount(manualDisabled); got != 0 {
+		t.Fatalf("manual disabled usage calls = %d, want 0", got)
+	}
+	if got := cpa.statusPatchCount(oldRecoverable, false); got != 0 {
+		t.Fatalf("enable status patch count = %d, want 0", got)
+	}
+}
+
+func TestManualKeeperRefreshDoesNotReenableNonRecoverableDisabledAccounts(t *testing.T) {
+	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
+
+	const manualDisabled = "manual-disabled-refresh.json"
+	const paymentDisabled = "payment-disabled-refresh.json"
+	cpa := newKeeperRecoveryTestCPA(t, map[string]map[string]any{
+		manualDisabled:  keeperRecoveryAuthDetail(manualDisabled, true),
+		paymentDisabled: keeperRecoveryAuthDetail(paymentDisabled, true),
+	}, map[string]int{
+		manualDisabled:  http.StatusOK,
+		paymentDisabled: http.StatusOK,
+	})
+	defer cpa.Close()
+
+	app, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+	configureKeeperTestCPA(t, app, cpa.URL(), func(cfg *AppConfig) {
+		cfg.CodexKeeper.DryRun = false
+	})
+	insertKeeperStateForCandidate(t, app, manualDisabled, nil, nil)
+	markKeeperStateDisabled(t, app, manualDisabled)
+	insertKeeperStateForCandidate(t, app, paymentDisabled, nil, nil)
+	markKeeperStatePaymentRequiredDisabled(t, app, paymentDisabled)
+
+	stats, _, err := app.executeKeeperRunForAccounts(context.Background(), "accounts", []string{manualDisabled, paymentDisabled}, func(string) {})
+	if err != nil {
+		t.Fatalf("manual refresh: %v", err)
+	}
+	if stats.StatusEnabled != 0 {
+		t.Fatalf("status_enabled = %d, want 0", stats.StatusEnabled)
+	}
+	assertKeeperStillDisabled(t, app, manualDisabled)
+	assertKeeperStillDisabled(t, app, paymentDisabled)
+	if got := cpa.statusPatchCount(manualDisabled, false) + cpa.statusPatchCount(paymentDisabled, false); got != 0 {
+		t.Fatalf("enable status patch count = %d, want 0", got)
+	}
+	if got := cpa.usageCallCount(manualDisabled); got != 1 {
+		t.Fatalf("manual disabled usage calls = %d, want 1", got)
+	}
+	if got := cpa.usageCallCount(paymentDisabled); got != 1 {
+		t.Fatalf("payment disabled usage calls = %d, want 1", got)
+	}
+}
+
+func TestKeeperRunKeepsRecoverableUnauthorizedAccountDisabledWhenStillUnauthorized(t *testing.T) {
+	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
+
+	const authName = "still-unauthorized.json"
+	cpa := newKeeperRecoveryTestCPA(t, map[string]map[string]any{
+		authName: keeperRecoveryAuthDetail(authName, true),
+	}, map[string]int{authName: http.StatusUnauthorized})
+	defer cpa.Close()
+
+	app, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+	configureKeeperTestCPA(t, app, cpa.URL(), func(cfg *AppConfig) {
+		cfg.CodexKeeper.DryRun = false
+	})
+	markKeeperStateRecoverableUnauthorizedDisabled(t, app, authName, timePtrValue(time.Now().In(appTimeLocation).Add(-20*time.Minute)))
+
+	stats, _, err := app.executeKeeperRunForAccounts(context.Background(), "accounts", []string{authName}, func(string) {})
+	if err != nil {
+		t.Fatalf("manual refresh: %v", err)
+	}
+	if stats.StatusDisabled != 1 {
+		t.Fatalf("status_disabled = %d, want 1", stats.StatusDisabled)
+	}
+	assertKeeperStillDisabled(t, app, authName)
+	state, err := app.getKeeperState(context.Background(), authName)
+	if err != nil {
+		t.Fatalf("get keeper state: %v", err)
+	}
+	if state.LastStatusCode == nil || *state.LastStatusCode != http.StatusUnauthorized {
+		t.Fatalf("last_status_code = %v, want 401", state.LastStatusCode)
+	}
+	if state.LastError == nil || !strings.Contains(*state.LastError, "凭证不可用") {
+		t.Fatalf("last_error = %v, want credential error", state.LastError)
+	}
+	if state.LatestAction == nil || !strings.Contains(*state.LatestAction, "禁用凭证") {
+		t.Fatalf("latest_action = %v, want keeper disable action", state.LatestAction)
+	}
+	if got := cpa.statusPatchCount(authName, false); got != 0 {
+		t.Fatalf("enable status patch count = %d, want 0", got)
+	}
+}
+
 func TestKeeperAuthDetailRequestFailureCountsAsNetworkError(t *testing.T) {
 	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
 
@@ -1271,6 +1492,251 @@ func markKeeperStateDisabled(t *testing.T, app *App, name string) {
 	`, dbTime(time.Now().In(appTimeLocation)), name)
 	if err != nil {
 		t.Fatalf("mark keeper state %s disabled: %v", name, err)
+	}
+}
+
+func markKeeperStateRecoverableUnauthorizedDisabled(t *testing.T, app *App, name string, lastCheckedAt *time.Time) {
+	t.Helper()
+	insertKeeperStateForCandidate(t, app, name, nil, lastCheckedAt)
+	_, err := app.db.Exec(`
+		UPDATE codex_keeper_auth_states
+		SET disabled = 1,
+		    last_status_code = ?,
+		    last_error = ?,
+		    latest_action = ?,
+		    last_checked_at = ?,
+		    updated_at = ?
+		WHERE auth_name = ?
+	`, http.StatusUnauthorized, "凭证不可用：HTTP 401", "禁用凭证：凭证不可用：HTTP 401", dbTimePtr(lastCheckedAt), dbTime(time.Now().In(appTimeLocation)), name)
+	if err != nil {
+		t.Fatalf("mark keeper state %s recoverable unauthorized disabled: %v", name, err)
+	}
+}
+
+func markKeeperStatePaymentRequiredDisabled(t *testing.T, app *App, name string) {
+	t.Helper()
+	_, err := app.db.Exec(`
+		UPDATE codex_keeper_auth_states
+		SET disabled = 1,
+		    last_status_code = ?,
+		    last_error = ?,
+		    latest_action = ?,
+		    updated_at = ?
+		WHERE auth_name = ?
+	`, http.StatusPaymentRequired, "凭证不可用：HTTP 402", "禁用凭证：凭证不可用：HTTP 402", dbTime(time.Now().In(appTimeLocation)), name)
+	if err != nil {
+		t.Fatalf("mark keeper state %s payment required disabled: %v", name, err)
+	}
+}
+
+type keeperRecoveryStatusPatch struct {
+	Name     string
+	Disabled bool
+}
+
+type keeperRecoveryTestCPA struct {
+	server          *httptest.Server
+	mu              sync.Mutex
+	authDetails     map[string]map[string]any
+	usageStatuses   map[string]int
+	usageCalls      map[string]int
+	statusPatches   []keeperRecoveryStatusPatch
+	priorityPatches map[string]int
+}
+
+func newKeeperRecoveryTestCPA(t *testing.T, authDetails map[string]map[string]any, usageStatuses map[string]int) *keeperRecoveryTestCPA {
+	t.Helper()
+	cpa := &keeperRecoveryTestCPA{
+		authDetails:     authDetails,
+		usageStatuses:   usageStatuses,
+		usageCalls:      map[string]int{},
+		priorityPatches: map[string]int{},
+	}
+	cpa.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files":
+			cpa.mu.Lock()
+			files := make([]map[string]any, 0, len(cpa.authDetails))
+			for name := range cpa.authDetails {
+				files = append(files, map[string]any{"name": name, "type": "codex"})
+			}
+			cpa.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": files})
+		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files/download":
+			name := r.URL.Query().Get("name")
+			cpa.mu.Lock()
+			detail, ok := cpa.authDetails[name]
+			if !ok {
+				cpa.mu.Unlock()
+				http.NotFound(w, r)
+				return
+			}
+			copied := map[string]any{}
+			for key, value := range detail {
+				copied[key] = value
+			}
+			cpa.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(copied)
+		case r.Method == http.MethodPost && r.URL.Path == "/v0/management/api-call":
+			var payload struct {
+				AuthIndex string `json:"auth_index"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			cpa.mu.Lock()
+			cpa.usageCalls[payload.AuthIndex]++
+			status := cpa.usageStatuses[payload.AuthIndex]
+			if status == 0 {
+				status = http.StatusOK
+			}
+			planType := "free"
+			if detail, ok := cpa.authDetails[payload.AuthIndex]; ok {
+				if value, ok := detail["account_type"].(string); ok && strings.TrimSpace(value) != "" {
+					planType = value
+				}
+			}
+			cpa.mu.Unlock()
+			if status >= 200 && status < 300 {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status_code": status,
+					"body": map[string]any{
+						"plan_type": planType,
+						"rate_limit": map[string]any{
+							"primary_window": map[string]any{
+								"used_percent":        10,
+								"reset_after_seconds": 3600,
+							},
+						},
+					},
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status_code": status,
+				"body": map[string]any{
+					"error": map[string]any{
+						"message": "test credential error",
+						"code":    "test_credential_error",
+					},
+					"status": status,
+				},
+			})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v0/management/auth-files/status":
+			var payload struct {
+				Name     string `json:"name"`
+				Disabled bool   `json:"disabled"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			cpa.mu.Lock()
+			cpa.statusPatches = append(cpa.statusPatches, keeperRecoveryStatusPatch{Name: payload.Name, Disabled: payload.Disabled})
+			if detail, ok := cpa.authDetails[payload.Name]; ok {
+				detail["disabled"] = payload.Disabled
+			}
+			cpa.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v0/management/auth-files/fields":
+			var payload struct {
+				Name     string `json:"name"`
+				Priority *int   `json:"priority"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			cpa.mu.Lock()
+			cpa.priorityPatches[payload.Name]++
+			if detail, ok := cpa.authDetails[payload.Name]; ok {
+				if payload.Priority == nil {
+					delete(detail, "priority")
+				} else {
+					detail["priority"] = *payload.Priority
+				}
+			}
+			cpa.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return cpa
+}
+
+func keeperRecoveryAuthDetail(name string, disabled bool) map[string]any {
+	return map[string]any{
+		"name":         name,
+		"type":         "codex",
+		"email":        name + "@example.com",
+		"account_type": "free",
+		"disabled":     disabled,
+		"priority":     4,
+		"access_token": "test-token",
+		"auth_index":   name,
+	}
+}
+
+func (c *keeperRecoveryTestCPA) URL() string {
+	return c.server.URL
+}
+
+func (c *keeperRecoveryTestCPA) Close() {
+	c.server.Close()
+}
+
+func (c *keeperRecoveryTestCPA) usageCallCount(name string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.usageCalls[name]
+}
+
+func (c *keeperRecoveryTestCPA) statusPatchCount(name string, disabled bool) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	count := 0
+	for _, patch := range c.statusPatches {
+		if patch.Name == name && patch.Disabled == disabled {
+			count++
+		}
+	}
+	return count
+}
+
+func assertKeeperRecoveredState(t *testing.T, app *App, name string) {
+	t.Helper()
+	state, err := app.getKeeperState(context.Background(), name)
+	if err != nil {
+		t.Fatalf("get keeper state %s: %v", name, err)
+	}
+	if state.Disabled {
+		t.Fatalf("%s disabled = true, want false", name)
+	}
+	if state.LastStatusCode == nil || *state.LastStatusCode != http.StatusOK {
+		t.Fatalf("%s last_status_code = %v, want 200", name, state.LastStatusCode)
+	}
+	if state.LastError != nil {
+		t.Fatalf("%s last_error = %v, want nil", name, state.LastError)
+	}
+	if state.LatestAction == nil || !strings.Contains(*state.LatestAction, "恢复启用") {
+		t.Fatalf("%s latest_action = %v, want recovery action", name, state.LatestAction)
+	}
+	if state.LastHealthyAt == nil {
+		t.Fatalf("%s last_healthy_at is nil, want recovery to mark healthy", name)
+	}
+}
+
+func assertKeeperStillDisabled(t *testing.T, app *App, name string) {
+	t.Helper()
+	state, err := app.getKeeperState(context.Background(), name)
+	if err != nil {
+		t.Fatalf("get keeper state %s: %v", name, err)
+	}
+	if !state.Disabled {
+		t.Fatalf("%s disabled = false, want true", name)
 	}
 }
 

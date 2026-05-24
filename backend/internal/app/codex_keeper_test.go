@@ -892,14 +892,14 @@ func TestKeeperRunPreservesBadCredentialDiagnosisAfterRemoteDisabled(t *testing.
 
 	mu.Lock()
 	defer mu.Unlock()
-	if usageCalls != 1 {
-		t.Fatalf("usage calls = %d, want 1 because disabled account skips later usage inspection", usageCalls)
+	if usageCalls != 2 {
+		t.Fatalf("usage calls = %d, want 2 because recoverable 401-disabled account is rechecked", usageCalls)
 	}
 	if statusPatchCount != 1 {
 		t.Fatalf("status patch count = %d, want 1", statusPatchCount)
 	}
-	if priorityPatchCount != 1 {
-		t.Fatalf("priority patch count = %d, want 1", priorityPatchCount)
+	if priorityPatchCount != 2 {
+		t.Fatalf("priority patch count = %d, want 2", priorityPatchCount)
 	}
 }
 

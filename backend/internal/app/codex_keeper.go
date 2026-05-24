@@ -1667,11 +1667,11 @@ func (a *App) executeKeeperRunWithOptions(ctx context.Context, options keeperRun
 		}
 	}
 	if options.Mode == "conditional" {
-		detail = fmt.Sprintf("条件刷新完成：健康 %d，坏凭证禁用 %d，优先级降级 %d，优先级恢复 %d，网络错误 %d，缓存跳过 %d", stats.Healthy, stats.StatusDisabled, stats.PriorityDegraded, stats.PriorityRestored, stats.NetworkError, stats.Skipped)
+		detail = fmt.Sprintf("条件刷新完成：健康 %d，坏凭证禁用 %d，恢复启用 %d，优先级降级 %d，优先级恢复 %d，网络错误 %d，缓存跳过 %d", stats.Healthy, stats.StatusDisabled, stats.StatusEnabled, stats.PriorityDegraded, stats.PriorityRestored, stats.NetworkError, stats.Skipped)
 	} else if len(targetSet) > 0 {
-		detail = fmt.Sprintf("账号刷新完成：健康 %d，凭证异常 %d，优先级降级 %d，优先级恢复 %d，网络错误 %d", stats.Healthy, stats.StatusDisabled, stats.PriorityDegraded, stats.PriorityRestored, stats.NetworkError)
+		detail = fmt.Sprintf("账号刷新完成：健康 %d，凭证异常 %d，恢复启用 %d，优先级降级 %d，优先级恢复 %d，网络错误 %d", stats.Healthy, stats.StatusDisabled, stats.StatusEnabled, stats.PriorityDegraded, stats.PriorityRestored, stats.NetworkError)
 	} else {
-		detail = fmt.Sprintf("巡检完成：健康 %d，坏凭证禁用 %d，优先级降级 %d，网络错误 %d，缓存跳过 %d", stats.Healthy, stats.StatusDisabled, stats.PriorityDegraded, stats.NetworkError, stats.Skipped)
+		detail = fmt.Sprintf("巡检完成：健康 %d，坏凭证禁用 %d，恢复启用 %d，优先级降级 %d，网络错误 %d，缓存跳过 %d", stats.Healthy, stats.StatusDisabled, stats.StatusEnabled, stats.PriorityDegraded, stats.NetworkError, stats.Skipped)
 	}
 	if runID > 0 {
 		_ = a.finishKeeperRun(ctx, runID, "completed", detail, stats)
@@ -2255,7 +2255,14 @@ func (a *App) processKeeperAuth(ctx context.Context, cfg AppConfig, authInfo map
 	disabled := keeperBool(merged["disabled"])
 	result.Disabled = &disabled
 	result.AccountType = accountTypeFromKeeperDetail(merged, nil)
-	if disabled && !manualRefresh {
+	var state *keeperAuthState
+	var restorePriority *int
+	if loadedState, err := a.getKeeperState(ctx, name); err == nil {
+		state = loadedState
+		restorePriority = loadedState.RestorePriority
+	}
+	recoverableUnauthorizedDisabled := disabled && isKeeperRecoverableUnauthorizedDisabledState(state)
+	if disabled && !manualRefresh && !recoverableUnauthorizedDisabled {
 		result.Result = "disabled"
 		a.preserveKeeperBadCredentialDiagnosis(ctx, &result)
 		_ = a.upsertKeeperState(ctx, result)
@@ -2354,10 +2361,32 @@ func (a *App) processKeeperAuth(ctx context.Context, cfg AppConfig, authInfo map
 	result.QuotaThreshold = &cfg.CodexKeeper.QuotaThreshold
 	result.Result = "healthy"
 
-	var restorePriority *int
-	if state, err := a.getKeeperState(ctx, name); err == nil {
-		restorePriority = state.RestorePriority
+	if recoverableUnauthorizedDisabled {
+		action := fmt.Sprintf("恢复启用：usage 检测恢复 HTTP %d", *usageResult.StatusCode)
+		if !cfg.CodexKeeper.DryRun {
+			if err := a.setKeeperRemoteDisabled(ctx, cfg, name, false); err != nil {
+				message := "恢复启用失败：" + err.Error()
+				result.Result = "network_error"
+				result.LastError = &message
+				result.LatestAction = &message
+				_ = a.upsertKeeperState(ctx, result)
+				logFn(name + ": " + message)
+				return result
+			}
+			disabled = false
+			result.Disabled = &disabled
+		} else {
+			action = "模拟" + action
+		}
+		result.Result = "status_enabled"
+		result.LatestAction = &action
+		result.ClearRestorePriority = true
+		result.LastError = nil
+		_ = a.upsertKeeperState(ctx, result)
+		logFn(name + ": " + action)
+		return result
 	}
+
 	action := a.applyKeeperPriorityPolicy(ctx, cfg, name, result.AccountType, result.Priority, restorePriority, usage)
 	if action != nil {
 		result.LatestAction = &action.Message
@@ -2822,7 +2851,7 @@ func (a *App) upsertKeeperState(ctx context.Context, result keeperAccountResult)
 	now := dbTime(time.Now())
 	checkedAt := dbTime(result.CheckedAt)
 	var lastHealthy any
-	if result.Result == "healthy" || result.Result == "priority_degraded" || result.Result == "priority_restored" {
+	if result.Result == "healthy" || result.Result == "status_enabled" || result.Result == "priority_degraded" || result.Result == "priority_restored" {
 		lastHealthy = checkedAt
 	}
 	_, err := a.db.ExecContext(ctx, `
@@ -3206,6 +3235,14 @@ func (a *App) preserveKeeperBadCredentialDiagnosis(ctx context.Context, result *
 	result.LastStatusCode = state.LastStatusCode
 	result.LastError = cloneStringPtr(state.LastError)
 	result.LatestAction = cloneStringPtr(state.LatestAction)
+}
+
+func isKeeperRecoverableUnauthorizedDisabledState(state *keeperAuthState) bool {
+	return state != nil &&
+		state.Disabled &&
+		state.LastStatusCode != nil &&
+		*state.LastStatusCode == http.StatusUnauthorized &&
+		isKeeperBadCredentialDisableAction(state.LatestAction)
 }
 
 func isKeeperBadCredentialDisableAction(action *string) bool {
