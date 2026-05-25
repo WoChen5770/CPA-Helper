@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -3108,6 +3109,8 @@ func parseKeeperUsageInfo(payload map[string]any) keeperUsageInfo {
 	}
 	if value := keeperString(payload["plan_type"]); value != "" {
 		usage.PlanType = value
+	} else if value := keeperString(payload["planType"]); value != "" {
+		usage.PlanType = value
 	}
 	rateLimit, _ := payload["rate_limit"].(map[string]any)
 	primary, _ := rateLimit["primary_window"].(map[string]any)
@@ -3165,19 +3168,16 @@ func accountTypeFromKeeperDetail(detail map[string]any, usage *keeperUsageInfo) 
 	if usage != nil {
 		values = append(values, usage.PlanType)
 	}
-	for _, key := range []string{"plan_type", "plan", "tier", "account_plan", "subscription_plan", "sku", "account_type"} {
-		if value := keeperString(detail[key]); value != "" {
-			values = append(values, value)
-		}
-	}
+	values = append(values, keeperAccountTypeValues(detail)...)
 	text := strings.ToLower(strings.Join(values, " "))
-	text = strings.NewReplacer("-", "_", " ", "_").Replace(text)
+	text = strings.NewReplacer("-", "_", " ", "_", ".", "_", "@", "_", "/", "_", "\\", "_").Replace(text)
+	bounded := "_" + text + "_"
 	var result string
 	switch {
-	case strings.Contains(text, "20x") || strings.Contains(text, "pro_20"):
-		result = "pro_20x"
-	case strings.Contains(text, "5x") || strings.Contains(text, "pro_5"):
+	case strings.Contains(text, "prolite") || strings.Contains(text, "pro_lite") || strings.Contains(text, "5x") || strings.Contains(text, "pro_5"):
 		result = "pro_5x"
+	case strings.Contains(text, "20x") || strings.Contains(text, "pro_20") || strings.Contains(bounded, "_pro_"):
+		result = "pro_20x"
 	case strings.Contains(text, "team") || strings.Contains(text, "business"):
 		result = "team"
 	case strings.Contains(text, "plus"):
@@ -3188,6 +3188,94 @@ func accountTypeFromKeeperDetail(detail map[string]any, usage *keeperUsageInfo) 
 		return nil
 	}
 	return &result
+}
+
+func keeperAccountTypeValues(detail map[string]any) []string {
+	if detail == nil {
+		return nil
+	}
+	values := []string{}
+	appendString := func(value any) {
+		if text := keeperString(value); text != "" {
+			values = append(values, text)
+		}
+	}
+	for _, key := range []string{"plan_type", "planType", "plan", "tier", "account_plan", "subscription_plan", "sku", "account_type", "accountType"} {
+		appendString(detail[key])
+	}
+	for _, key := range []string{"attributes", "metadata"} {
+		if object, ok := detail[key].(map[string]any); ok {
+			for _, nestedKey := range []string{"plan_type", "planType", "chatgpt_plan_type", "chatgptPlanType"} {
+				appendString(object[nestedKey])
+			}
+			values = append(values, keeperIDTokenPlanValues(object["id_token"])...)
+		}
+	}
+	values = append(values, keeperIDTokenPlanValues(detail["id_token"])...)
+	for _, key := range []string{"name", "file_name", "filename"} {
+		appendString(detail[key])
+	}
+	if path := keeperString(detail["path"]); path != "" {
+		values = append(values, filepath.Base(path))
+	}
+	return values
+}
+
+func keeperIDTokenPlanValues(value any) []string {
+	object := keeperIDTokenClaims(value)
+	if object == nil {
+		return nil
+	}
+	values := []string{}
+	appendString := func(value any) {
+		if text := keeperString(value); text != "" {
+			values = append(values, text)
+		}
+	}
+	for _, key := range []string{"plan_type", "planType", "chatgpt_plan_type", "chatgptPlanType"} {
+		appendString(object[key])
+	}
+	if authInfo, ok := object["https://api.openai.com/auth"].(map[string]any); ok {
+		for _, key := range []string{"plan_type", "planType", "chatgpt_plan_type", "chatgptPlanType"} {
+			appendString(authInfo[key])
+		}
+	}
+	return values
+}
+
+func keeperIDTokenClaims(value any) map[string]any {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case map[string]any:
+		return typed
+	case string:
+		token := strings.TrimSpace(typed)
+		if token == "" {
+			return nil
+		}
+		var object map[string]any
+		if json.Unmarshal([]byte(token), &object) == nil {
+			return object
+		}
+		parts := strings.Split(token, ".")
+		if len(parts) < 2 {
+			return nil
+		}
+		decoded, err := base64.RawURLEncoding.DecodeString(parts[1])
+		if err != nil {
+			decoded, err = base64.URLEncoding.DecodeString(parts[1])
+		}
+		if err != nil {
+			return nil
+		}
+		if json.Unmarshal(decoded, &object) != nil {
+			return nil
+		}
+		return object
+	default:
+		return nil
+	}
 }
 
 func keeperPriorityForType(accountType *string, rules map[string]int) *int {

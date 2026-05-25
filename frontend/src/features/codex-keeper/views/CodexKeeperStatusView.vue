@@ -92,6 +92,8 @@ const ACCOUNT_STATUS_PREFERENCE_STORAGE_KEY = 'cpa-helper-codex-keeper-status-pr
 const ACCOUNT_TABLE_MIN_ROW_HEIGHT = 52
 const ACCOUNT_TABLE_MAX_HEIGHT = 'min(620px, max(320px, calc(100dvh - 430px)))'
 const ACCOUNT_TABLE_VIRTUAL_THRESHOLD = 200
+const CODEX_FIVE_HOUR_WINDOW_SECONDS = 5 * 60 * 60
+const CODEX_WEEK_WINDOW_SECONDS = 7 * 24 * 60 * 60
 const disabledTableScrollX = 1302
 const normalTableScrollX = 1816
 const KEEPER_STATUS_POLL_INTERVAL_MS = 3000
@@ -219,9 +221,15 @@ const enabledAccountCount = computed(() => accounts.value.filter((account) => !a
 const disabledAccountCount = computed(() => accounts.value.filter((account) => account.disabled).length)
 const hasDisabledAccounts = computed(() => disabledAccountCount.value > 0)
 const showDisabledSection = computed(
-  () => filters.status !== 'enabled' && (hasDisabledAccounts.value || filters.status === 'disabled'),
+  () => filters.status !== 'enabled' && filteredDisabledAccounts.value.length > 0,
 )
-const showNormalSection = computed(() => filters.status !== 'disabled')
+const showNormalSection = computed(
+  () => filters.status !== 'disabled' && filteredNormalAccounts.value.length > 0,
+)
+const showTableLoadingState = computed(() => isLoading.value && accounts.value.length === 0)
+const showEmptyTableState = computed(
+  () => !showTableLoadingState.value && !showDisabledSection.value && !showNormalSection.value,
+)
 const isKeeperRunning = computed(() => keeperStatus.value?.running === true)
 const isKeeperDaemonRunning = computed(() => keeperStatus.value?.daemon_running === true)
 const keeperStateType = computed(() => {
@@ -809,11 +817,34 @@ function isFreeQuotaWindowAccount(accountType: string | null): boolean {
   return accountType?.trim().toLowerCase() === 'free'
 }
 
-function quotaWindowLabels(accountType: string | null): { primary: string; secondary: string } {
-  if (isFreeQuotaWindowAccount(accountType)) {
+function quotaWindowSecondsFor(account: CodexKeeperAccount, window: 'primary' | 'secondary'): number | null {
+  if (window === 'primary') {
+    return account.primary_window_seconds ?? account.primary_window_usage?.window_seconds ?? null
+  }
+  return account.secondary_window_seconds ?? account.secondary_window_usage?.window_seconds ?? null
+}
+
+function isPaidQuotaWindow(account: CodexKeeperAccount): boolean {
+  return (
+    isPaidQuotaWindowAccount(account.account_type) ||
+    (quotaWindowSecondsFor(account, 'primary') === CODEX_FIVE_HOUR_WINDOW_SECONDS &&
+      quotaWindowSecondsFor(account, 'secondary') === CODEX_WEEK_WINDOW_SECONDS)
+  )
+}
+
+function isFreeQuotaWindow(account: CodexKeeperAccount): boolean {
+  return (
+    isFreeQuotaWindowAccount(account.account_type) ||
+    (quotaWindowSecondsFor(account, 'primary') === CODEX_WEEK_WINDOW_SECONDS &&
+      quotaWindowSecondsFor(account, 'secondary') === null)
+  )
+}
+
+function quotaWindowLabels(account: CodexKeeperAccount): { primary: string; secondary: string } {
+  if (isFreeQuotaWindow(account)) {
     return { primary: '周限额', secondary: '次限额' }
   }
-  if (isPaidQuotaWindowAccount(accountType)) {
+  if (isPaidQuotaWindow(account)) {
     return { primary: '5小时限额', secondary: '周限额' }
   }
   return { primary: '主', secondary: '次' }
@@ -827,7 +858,7 @@ function quotaWindowItems(account: CodexKeeperAccount): QuotaWindowItem[] {
   if (!shouldShowQuotaWindow(account) || account.primary_used_percent === null) {
     return []
   }
-  const labels = quotaWindowLabels(account.account_type)
+  const labels = quotaWindowLabels(account)
   const items = [
     {
       label: labels.primary,
@@ -836,7 +867,7 @@ function quotaWindowItems(account: CodexKeeperAccount): QuotaWindowItem[] {
       usage: account.primary_window_usage,
     },
   ]
-  if (account.secondary_used_percent !== null && !isFreeQuotaWindowAccount(account.account_type)) {
+  if (account.secondary_used_percent !== null && !isFreeQuotaWindow(account)) {
     items.push({
       label: labels.secondary,
       remainingPercent: remainingQuotaPercent(account.secondary_used_percent),
@@ -851,18 +882,17 @@ function quotaSortRemainingPercent(account: CodexKeeperAccount, key: AccountSort
   if (!shouldShowQuotaWindow(account)) {
     return null
   }
-  const normalized = account.account_type?.trim().toLowerCase()
   if (key === 'quotaDay') {
-    if (normalized === 'free') {
+    if (isFreeQuotaWindow(account)) {
       return null
     }
     return nullableRemainingQuotaPercent(account.primary_used_percent)
   }
   if (key === 'quotaWeek') {
-    if (normalized === 'free') {
+    if (isFreeQuotaWindow(account)) {
       return nullableRemainingQuotaPercent(account.primary_used_percent)
     }
-    if (isPaidQuotaWindowAccount(account.account_type)) {
+    if (isPaidQuotaWindow(account)) {
       return nullableRemainingQuotaPercent(account.secondary_used_percent)
     }
   }
@@ -1995,6 +2025,8 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="isTableView" class="account-sections">
+        <div v-if="showTableLoadingState" class="empty-state">账号加载中...</div>
+        <div v-else-if="showEmptyTableState" class="empty-state">当前筛选下暂无账号</div>
         <section v-if="showDisabledSection" class="account-section">
           <div class="account-section-header">
             <div class="account-section-title-group">

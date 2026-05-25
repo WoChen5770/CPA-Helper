@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -365,6 +366,102 @@ func TestKeeperQuotaWindowUsageAttributionPrefersSourceAccount(t *testing.T) {
 	}
 }
 
+func TestAccountTypeFromKeeperDetailNormalizesCodexProPlans(t *testing.T) {
+	tests := []struct {
+		name   string
+		detail map[string]any
+		usage  *keeperUsageInfo
+		want   string
+	}{
+		{
+			name:  "usage pro is pro 20x",
+			usage: &keeperUsageInfo{PlanType: "pro"},
+			want:  "pro_20x",
+		},
+		{
+			name:  "usage prolite is pro 5x",
+			usage: &keeperUsageInfo{PlanType: "prolite"},
+			want:  "pro_5x",
+		},
+		{
+			name:   "top level pro-lite is pro 5x",
+			detail: map[string]any{"plan_type": "pro-lite"},
+			want:   "pro_5x",
+		},
+		{
+			name:   "nested id token plan is used",
+			detail: map[string]any{"id_token": map[string]any{"plan_type": "pro_lite"}},
+			want:   "pro_5x",
+		},
+		{
+			name:   "attributes plan is used",
+			detail: map[string]any{"attributes": map[string]any{"plan_type": "pro"}},
+			want:   "pro_20x",
+		},
+		{
+			name:   "jwt chatgpt plan is used",
+			detail: map[string]any{"metadata": map[string]any{"id_token": keeperTestCodexJWT(t, "prolite")}},
+			want:   "pro_5x",
+		},
+		{
+			name:   "pro file name suffix is fallback",
+			detail: map[string]any{"name": "codex-user@example.com-pro.json"},
+			want:   "pro_20x",
+		},
+		{
+			name:   "prolite file name suffix is fallback",
+			detail: map[string]any{"name": "codex-user@example.com-prolite.json"},
+			want:   "pro_5x",
+		},
+		{
+			name:   "legacy pro_20x remains supported",
+			detail: map[string]any{"account_type": "pro_20x"},
+			want:   "pro_20x",
+		},
+		{
+			name:   "legacy pro_5x remains supported",
+			detail: map[string]any{"account_type": "pro_5x"},
+			want:   "pro_5x",
+		},
+		{
+			name:   "plus remains supported",
+			detail: map[string]any{"plan_type": "plus"},
+			want:   "plus",
+		},
+		{
+			name:   "unknown stays nil",
+			detail: map[string]any{"name": "codex-user@example.com.json"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := accountTypeFromKeeperDetail(tt.detail, tt.usage)
+			if tt.want == "" {
+				if got != nil {
+					t.Fatalf("accountTypeFromKeeperDetail() = %q, want nil", *got)
+				}
+				return
+			}
+			if got == nil || *got != tt.want {
+				t.Fatalf("accountTypeFromKeeperDetail() = %v, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func keeperTestCodexJWT(t *testing.T, planType string) string {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{
+		"https://api.openai.com/auth": map[string]any{
+			"chatgpt_plan_type": planType,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal test jwt payload: %v", err)
+	}
+	return "header." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+}
+
 func TestKeeperQuotaWindowUsageInfersAccountWindows(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 30, 0, 0, appTimeLocation)
 	resetAt := now.Add(30 * time.Minute)
@@ -415,6 +512,10 @@ func TestKeeperQuotaWindowUsageInfersAccountWindows(t *testing.T) {
 	}
 	if usage.SecondaryWindowSeconds == nil || *usage.SecondaryWindowSeconds != 5678 {
 		t.Fatalf("secondary limit_window_seconds = %v, want 5678", usage.SecondaryWindowSeconds)
+	}
+	camelUsage := parseKeeperUsageInfo(map[string]any{"planType": "pro"})
+	if camelUsage.PlanType != "pro" {
+		t.Fatalf("camel planType = %q, want pro", camelUsage.PlanType)
 	}
 }
 
