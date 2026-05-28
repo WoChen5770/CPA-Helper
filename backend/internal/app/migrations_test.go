@@ -28,6 +28,12 @@ func TestRunMigrationsCreatesGooseVersionAndFinalSchema(t *testing.T) {
 	if !testColumnExists(t, app.db, "usage_records", "cache_creation_tokens") {
 		t.Fatal("usage_records.cache_creation_tokens was not created")
 	}
+	if !testColumnExists(t, app.db, "usage_records", "reasoning_effort") {
+		t.Fatal("usage_records.reasoning_effort was not created")
+	}
+	if !testColumnExists(t, app.db, "usage_records", "ttft_ms") {
+		t.Fatal("usage_records.ttft_ms was not created")
+	}
 	if !testColumnExists(t, app.db, "model_prices", "cache_read_usd_per_million") {
 		t.Fatal("model_prices.cache_read_usd_per_million was not created")
 	}
@@ -75,8 +81,8 @@ func TestRunMigrationsCreatesGooseVersionAndFinalSchema(t *testing.T) {
 	if err := app.db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("query goose version: %v", err)
 	}
-	if version != 202605200004 {
-		t.Fatalf("goose version = %d, want 202605200004", version)
+	if version != 202605280001 {
+		t.Fatalf("goose version = %d, want 202605280001", version)
 	}
 }
 
@@ -172,7 +178,22 @@ func TestRunMigrationsRepairsOldPythonSchemaWithoutOldCode(t *testing.T) {
 			'openai', 'gpt-test', '/v1/chat/completions', 'queue', 'req-1',
 			'bearer', 12.5, 0, 10, 20, 0, 0, 30, 'dedupe-1', ?
 		)
-	`, apiKeyHash, `{"api_key":"`+apiKey+`","auth":"bearer","tokens":{"cache_read_tokens":7,"cache_creation_tokens":8}}`); err != nil {
+	`, apiKeyHash, `{"api_key":"`+apiKey+`","auth":"bearer","reasoning_effort":"xhigh","ttft_ms":710,"tokens":{"cache_read_tokens":7,"cache_creation_tokens":8}}`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO usage_records (
+			created_at, timestamp, api_key_hash, api_key_masked, provider, model,
+			endpoint, source, request_id, auth, latency_ms, failed, input_tokens,
+			output_tokens, cached_tokens, reasoning_tokens, total_tokens,
+			dedupe_key, raw_json
+		) VALUES (
+			'2026-05-04 00:01:00', '2026-05-04 00:01:00', ?, 'sk...test',
+			'openai', 'gpt-test', '/v1/chat/completions', 'queue', 'req-ttft-zero',
+			'bearer', 12.5, 0, 10, 20, 0, 0, 30, 'dedupe-ttft-zero', ?
+		)
+	`, apiKeyHash, `{"api_key":"`+apiKey+`","auth":"bearer","reasoning_effort":"minimal","ttft_ms":0}`); err != nil {
 		_ = db.Close()
 		t.Fatal(err)
 	}
@@ -234,6 +255,20 @@ func TestRunMigrationsRepairsOldPythonSchemaWithoutOldCode(t *testing.T) {
 	}
 	if cacheReadTokens != 7 || cacheCreationTokens != 8 {
 		t.Fatalf("migrated cache tokens = read %d creation %d, want 7 and 8", cacheReadTokens, cacheCreationTokens)
+	}
+	var reasoningEffort string
+	var ttftMS sql.NullFloat64
+	if err := app.db.QueryRow(`SELECT reasoning_effort, ttft_ms FROM usage_records WHERE dedupe_key = 'dedupe-1'`).Scan(&reasoningEffort, &ttftMS); err != nil {
+		t.Fatalf("migrated reasoning/ttft not found: %v", err)
+	}
+	if reasoningEffort != "xhigh" || !ttftMS.Valid || ttftMS.Float64 != 710 {
+		t.Fatalf("migrated reasoning/ttft = %q/%v, want xhigh/710", reasoningEffort, ttftMS)
+	}
+	if err := app.db.QueryRow(`SELECT ttft_ms FROM usage_records WHERE dedupe_key = 'dedupe-ttft-zero'`).Scan(&ttftMS); err != nil {
+		t.Fatalf("migrated zero ttft record not found: %v", err)
+	}
+	if ttftMS.Valid {
+		t.Fatalf("migrated zero ttft = %v, want NULL", ttftMS.Float64)
 	}
 	if testColumnExists(t, app.db, "model_prices", "cached_usd_per_million") {
 		t.Fatal("old model_prices.cached_usd_per_million should be removed")

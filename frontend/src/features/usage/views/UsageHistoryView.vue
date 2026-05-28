@@ -3,12 +3,12 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, type Component } f
 import { useRoute, useRouter } from 'vue-router'
 import { NButton, NDatePicker, NSelect, NSpin, useMessage } from 'naive-ui'
 import {
-  Activity,
   CircleDollarSign,
   ClipboardList,
   Gauge,
   Layers3,
   ShieldCheck,
+  Timer,
 } from 'lucide-vue-next'
 
 import { getUsageOverview } from '@/features/usage/api/usageApi'
@@ -679,6 +679,13 @@ function formatRate(value: number): string {
   }).format(value)
 }
 
+function formatLatency(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) {
+    return '-'
+  }
+  return `${formatInteger(Math.round(value))} ms`
+}
+
 function parseAPITime(value: string | null | undefined): number | null {
   if (!value) {
     return null
@@ -719,11 +726,6 @@ const rateSummary = computed(() =>
 const requestsPerMinute = computed(() => {
   const currentSummary = rateSummary.value
   return (currentSummary?.total_records ?? 0) / summaryDurationMinutes(currentSummary)
-})
-
-const tokensPerMinute = computed(() => {
-  const currentSummary = rateSummary.value
-  return (currentSummary?.total_tokens ?? 0) / summaryDurationMinutes(currentSummary)
 })
 
 function quotaValueText(quota: UserQuotaStatus | null): string {
@@ -797,12 +799,12 @@ const metricCards = computed<MetricCardConfig[]>(() => {
       footnote: rateRangeLabel.value,
     },
     {
-      key: 'tpm',
-      label: 'TPM',
-      value: formatRate(tokensPerMinute.value),
-      icon: Activity,
+      key: 'average_ttft',
+      label: '平均首字耗时',
+      value: formatLatency(currentSummary?.average_ttft_ms ?? null),
+      icon: Timer,
       tone: 'teal',
-      footnote: rateRangeLabel.value,
+      footnote: dashboardRangeLabel.value,
     },
     {
       key: 'cost',

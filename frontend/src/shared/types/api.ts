@@ -248,6 +248,7 @@ export interface UsageSummary {
   cached_tokens: number
   reasoning_tokens: number
   total_tokens: number
+  average_ttft_ms: number | null
   estimated_cost_usd: number
   unpriced_records: number
 }
@@ -323,12 +324,14 @@ export interface UsageRecordListItem {
   user_label: string
   provider: string | null
   model: string | null
+  reasoning_effort: string | null
   endpoint: string | null
   source: string | null
   request_id: string | null
   auth_index: string | null
   auth: string | null
   latency_ms: number | null
+  ttft_ms: number | null
   failed: boolean
   input_tokens: number
   output_tokens: number

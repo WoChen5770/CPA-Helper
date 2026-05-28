@@ -56,9 +56,10 @@ const RECORDS_TABLE_COLUMN_WIDTHS = {
   timestamp: 150,
   user: 132,
   apiKeyDescription: 118,
-  model: 110,
+  model: 132,
   source: 190,
   failed: 68,
+  ttft: 110,
   latency: 110,
   inputTokens: 100,
   outputTokens: 145,
@@ -595,6 +596,24 @@ function formatLatency(value: number | null): string {
   return `${formatInteger(Math.round(value))} ms`
 }
 
+function formatPositiveLatency(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) {
+    return '-'
+  }
+  return formatLatency(value)
+}
+
+function formatModelWithReasoning(
+  record: Pick<UsageRecordListItem, 'model' | 'reasoning_effort'>,
+): string {
+  const model = textOrDash(record.model)
+  if (model === '-') {
+    return model
+  }
+  const reasoningEffort = record.reasoning_effort?.trim()
+  return reasoningEffort ? `${model} ${reasoningEffort}` : model
+}
+
 function formatOutputTps(row: Pick<UsageRecordListItem, 'latency_ms' | 'output_tokens'>): string {
   if (row.latency_ms === null || row.latency_ms <= 0) {
     return '-'
@@ -669,14 +688,15 @@ const detailRows = computed(() => {
   }
   const rows = [
     { label: '时间', value: formatDateTime(record.timestamp) },
-    { label: '模型', value: textOrDash(record.model) },
+    { label: '模型', value: formatModelWithReasoning(record) },
     { label: '服务商', value: textOrDash(record.provider) },
     { label: '接口', value: textOrDash(record.endpoint) },
     { label: 'API KEY 描述', value: apiKeyDescriptionLabel(record.api_key_description) },
     { label: '认证类型', value: textOrDash(record.auth) },
     { label: '请求 ID', value: textOrDash(record.request_id) },
     { label: '结果', value: record.failed ? '失败' : '成功' },
-    { label: '耗时', value: formatLatency(record.latency_ms) },
+    { label: '首字耗时', value: formatPositiveLatency(record.ttft_ms) },
+    { label: '总耗时', value: formatLatency(record.latency_ms) },
     { label: '输入 Token', value: formatInteger(record.input_tokens) },
     { label: '缓存 Token', value: formatInteger(record.cached_tokens) },
     { label: '缓存读 Token', value: formatInteger(record.cache_read_tokens) },
@@ -722,7 +742,13 @@ const columns = computed<DataTableColumns<UsageRecordListItem>>(() => [
     ellipsis: { tooltip: true },
     render: (row) => apiKeyDescriptionLabel(row.api_key_description),
   },
-  { title: '模型', key: 'model', width: RECORDS_TABLE_COLUMN_WIDTHS.model, ellipsis: { tooltip: true } },
+  {
+    title: '模型',
+    key: 'model',
+    width: RECORDS_TABLE_COLUMN_WIDTHS.model,
+    ellipsis: { tooltip: true },
+    render: (row) => formatModelWithReasoning(row),
+  },
   ...(isAccountScope.value
     ? []
     : [
@@ -745,7 +771,13 @@ const columns = computed<DataTableColumns<UsageRecordListItem>>(() => [
       ),
   },
   {
-    title: '耗时',
+    title: '首字耗时',
+    key: 'ttft_ms',
+    width: RECORDS_TABLE_COLUMN_WIDTHS.ttft,
+    render: (row) => formatPositiveLatency(row.ttft_ms),
+  },
+  {
+    title: '总耗时',
     key: 'latency_ms',
     width: RECORDS_TABLE_COLUMN_WIDTHS.latency,
     render: (row) => formatLatency(row.latency_ms),
