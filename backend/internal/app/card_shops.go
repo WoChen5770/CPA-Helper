@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	defaultCardShopsURL = "https://ldxp.qizhang.org/api/shops"
-	cardShopsTimeout    = 10 * time.Second
+	defaultCardShopsURL     = "https://ldxp.qizhang.org/api/shops"
+	cardShopsTimeout        = 10 * time.Second
+	maxCardShopTags         = 30
+	maxCardShopTagRuneCount = 32
 )
 
 type cardShopsResponse struct {
@@ -28,6 +30,14 @@ type cardShopFavoritesResponse struct {
 type cardShopFavoriteUpdateRequest struct {
 	ShopKey  string `json:"shop_key"`
 	Favorite bool   `json:"favorite"`
+}
+
+type cardShopTagsResponse struct {
+	Tags []string `json:"tags"`
+}
+
+type cardShopTagsUpdateRequest struct {
+	Tags []string `json:"tags"`
 }
 
 func (a *App) handleCardShops(w http.ResponseWriter, r *http.Request) error {
@@ -86,6 +96,39 @@ func (a *App) handleCardShopFavorites(w http.ResponseWriter, r *http.Request) er
 	}
 }
 
+func (a *App) handleCardShopTags(w http.ResponseWriter, r *http.Request) error {
+	user, err := a.readyUser(r.Context(), r)
+	if err != nil {
+		return err
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		tags, err := a.cardShopTags(r.Context(), user.ID)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, cardShopTagsResponse{Tags: tags})
+		return nil
+	case http.MethodPut:
+		var payload cardShopTagsUpdateRequest
+		if err := decodeJSON(r, &payload); err != nil {
+			return err
+		}
+		tags, err := normalizeCardShopTags(payload.Tags)
+		if err != nil {
+			return err
+		}
+		if err := a.replaceCardShopTags(r.Context(), user.ID, tags); err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, cardShopTagsResponse{Tags: tags})
+		return nil
+	default:
+		return methodNotAllowed()
+	}
+}
+
 func fetchCardShops(ctx context.Context) ([]map[string]any, error) {
 	headers := http.Header{}
 	headers.Set("Accept", "application/json")
@@ -138,6 +181,31 @@ func normalizeCardShopFavoriteKey(value string) (string, error) {
 	return key, nil
 }
 
+func normalizeCardShopTags(values []string) ([]string, error) {
+	if len(values) > maxCardShopTags {
+		return nil, validationError("快速搜索标签不能超过 30 个")
+	}
+
+	tags := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		tag := strings.TrimSpace(value)
+		if tag == "" {
+			return nil, validationError("快速搜索标签不能为空")
+		}
+		if len([]rune(tag)) > maxCardShopTagRuneCount {
+			return nil, validationError("快速搜索标签不能超过 32 个字符")
+		}
+		key := strings.ToLower(tag)
+		if _, exists := seen[key]; exists {
+			return nil, validationError("快速搜索标签不能重复")
+		}
+		seen[key] = struct{}{}
+		tags = append(tags, tag)
+	}
+	return tags, nil
+}
+
 func (a *App) cardShopFavoriteKeys(ctx context.Context, userID int) ([]string, error) {
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT shop_key
@@ -181,4 +249,54 @@ func (a *App) setCardShopFavorite(ctx context.Context, userID int, shopKey strin
 		WHERE user_id = ? AND shop_key = ?
 	`, userID, shopKey)
 	return err
+}
+
+func (a *App) cardShopTags(ctx context.Context, userID int) ([]string, error) {
+	rows, err := a.db.QueryContext(ctx, `
+		SELECT tag
+		FROM user_card_shop_tags
+		WHERE user_id = ?
+		ORDER BY position ASC, tag ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tags := []string{}
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, err
+		}
+		tags = append(tags, tag)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tags, nil
+}
+
+func (a *App) replaceCardShopTags(ctx context.Context, userID int, tags []string) error {
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM user_card_shop_tags WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
+
+	now := dbTime(time.Now())
+	for index, tag := range tags {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO user_card_shop_tags (user_id, tag, position, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?)
+		`, userID, tag, index, now, now); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }

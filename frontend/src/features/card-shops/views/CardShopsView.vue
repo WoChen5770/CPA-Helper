@@ -1,24 +1,32 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { NAlert, NButton, NIcon, NInput, NSelect, NSpin, NSwitch, NTag } from 'naive-ui'
+import { computed, onMounted, ref, watch } from 'vue'
+import { NAlert, NButton, NIcon, NInput, NModal, NSelect, NSpin, NSwitch, NTag } from 'naive-ui'
 import {
   AlertTriangle,
   Clock3,
   ExternalLink,
+  GripVertical,
   MessageCircle,
   Package,
+  Plus as PlusIcon,
   RefreshCw,
+  RotateCcw,
   Search,
+  Settings2,
   ShoppingBag,
   Star,
   Store,
+  Trash2,
 } from 'lucide-vue-next'
 
 import {
   getCardShopFavorites,
+  getCardShopTags,
   getCardShops,
+  updateCardShopTags,
   updateCardShopFavorite,
 } from '@/features/card-shops/api/cardShopsApi'
+import { useCurrentUser } from '@/features/auth/state/currentUser'
 import type { CardShop, CardShopProductItem } from '@/shared/types/api'
 import { useI18n } from '@/shared/i18n'
 import { formatDateTime, formatInteger } from '@/shared/utils/format'
@@ -39,10 +47,39 @@ interface CardShopRow {
   score: number
 }
 
-const HOT_TAGS = ['Codex', 'RT', '接码', 'PP', 'kiro', 'Claude', 'Gemini', 'team', 'GPT'] as const
+interface CardShopViewPreferences {
+  version: 1
+  searchDraft: string
+  searchTerms: string[]
+  sortKey: CardShopSortKey
+  favoriteOnly: boolean
+}
+
+type CachedCardShopViewPreferences = Partial<Omit<CardShopViewPreferences, 'version'>>
+
+const DEFAULT_QUICK_TAGS = [
+  'Codex',
+  'GPT',
+  'Claude',
+  'Gemini',
+  'Kiro',
+  'Plus',
+  'Team',
+  'PayPal',
+  'Pix',
+  'GoPay',
+  '接码',
+  '实体卡',
+] as const
+const MAX_QUICK_TAGS = 30
+const MAX_QUICK_TAG_LENGTH = 32
+const CARD_SHOP_VIEW_PREFERENCES_VERSION = 1
+const CARD_SHOP_VIEW_PREFERENCES_STORAGE_PREFIX = 'cpa-helper-card-shops-view-preferences'
+const DEFAULT_SORT_KEY: CardShopSortKey = 'salesDesc'
 const DEFAULT_EMPTY_TEXT = '-'
 
 const { currentLanguage, errorText, t } = useI18n()
+const { currentUser } = useCurrentUser()
 const shops = ref<CardShop[]>([])
 const fetchedAt = ref<string | null>(null)
 const isLoading = ref(false)
@@ -53,7 +90,16 @@ const favoriteKeys = ref<Set<string>>(new Set())
 const favoriteUpdatingKeys = ref<Set<string>>(new Set())
 const searchDraft = ref('')
 const searchTerms = ref<string[]>([])
-const sortKey = ref<CardShopSortKey>('salesDesc')
+const sortKey = ref<CardShopSortKey>(DEFAULT_SORT_KEY)
+const quickTags = ref<string[]>(defaultQuickTags())
+const isTagModalOpen = ref(false)
+const editableTags = ref<string[]>([])
+const newTagDraft = ref('')
+const tagEditorError = ref<string | null>(null)
+const isSavingTags = ref(false)
+const draggingTagIndex = ref<number | null>(null)
+const activePreferenceUserID = ref<number | null>(null)
+const isRestoringViewPreferences = ref(false)
 
 const sortOptions = computed<Array<{ label: string; value: CardShopSortKey }>>(() => [
   { label: t('综合排序', 'Best match'), value: 'relevance' },
@@ -138,18 +184,45 @@ onMounted(() => {
   void refresh()
 })
 
+watch(
+  () => currentUser.value?.id ?? null,
+  (userID) => {
+    if (userID === null) {
+      activePreferenceUserID.value = null
+      return
+    }
+    restoreCardShopViewPreferences(userID)
+  },
+  { immediate: true },
+)
+
+watch(
+  () => ({
+    searchDraft: searchDraft.value,
+    searchTerms: [...searchTerms.value],
+    sortKey: sortKey.value,
+    favoriteOnly: favoriteOnly.value,
+  }),
+  () => saveCardShopViewPreferences(),
+)
+
 async function refresh() {
   isLoading.value = true
   loadError.value = null
   favoriteError.value = null
   try {
-    const [shopsResponse, favoritesResponse] = await Promise.all([
+    const [shopsResponse, favoritesResponse, tagsResponse] = await Promise.all([
       getCardShops(),
       getCardShopFavorites(),
+      getCardShopTags(),
     ])
     shops.value = shopsResponse.shops ?? []
     fetchedAt.value = shopsResponse.fetched_at
     favoriteKeys.value = new Set(favoritesResponse.shop_keys ?? [])
+    if (favoriteOnly.value && favoriteKeys.value.size === 0) {
+      favoriteOnly.value = false
+    }
+    quickTags.value = tagsOrDefault(tagsResponse.tags)
   } catch (error) {
     loadError.value = errorText(error, '加载卡网收录失败', 'Failed to load card shops')
   } finally {
@@ -157,7 +230,285 @@ async function refresh() {
   }
 }
 
-function applyHotTag(tag: string) {
+function restoreCardShopViewPreferences(userID: number) {
+  isRestoringViewPreferences.value = true
+  activePreferenceUserID.value = null
+  resetCardShopViewPreferences()
+
+  const preferences = readCardShopViewPreferences(userID)
+  if (preferences) {
+    if (typeof preferences.searchDraft === 'string') {
+      searchDraft.value = preferences.searchDraft
+    }
+    if (Array.isArray(preferences.searchTerms)) {
+      searchTerms.value = preferences.searchTerms
+    }
+    if (preferences.sortKey) {
+      sortKey.value = preferences.sortKey
+    }
+    if (typeof preferences.favoriteOnly === 'boolean') {
+      favoriteOnly.value = preferences.favoriteOnly
+    }
+  }
+
+  activePreferenceUserID.value = userID
+  isRestoringViewPreferences.value = false
+}
+
+function resetCardShopViewPreferences() {
+  searchDraft.value = ''
+  searchTerms.value = []
+  sortKey.value = DEFAULT_SORT_KEY
+  favoriteOnly.value = false
+}
+
+function readCardShopViewPreferences(userID: number): CachedCardShopViewPreferences | null {
+  if (typeof localStorage === 'undefined') {
+    return null
+  }
+  const raw = localStorage.getItem(cardShopViewPreferencesStorageKey(userID))
+  if (!raw) {
+    return null
+  }
+
+  try {
+    const value: unknown = JSON.parse(raw)
+    if (!value || typeof value !== 'object') {
+      return null
+    }
+    const source = value as Record<string, unknown>
+    if (source.version !== CARD_SHOP_VIEW_PREFERENCES_VERSION) {
+      return null
+    }
+
+    const preferences: CachedCardShopViewPreferences = {}
+    if (typeof source.searchDraft === 'string') {
+      preferences.searchDraft = source.searchDraft
+    }
+    const cachedSearchTerms = normalizeCachedSearchTerms(source.searchTerms)
+    if (cachedSearchTerms) {
+      preferences.searchTerms = cachedSearchTerms
+    }
+    if (isCardShopSortKey(source.sortKey)) {
+      preferences.sortKey = source.sortKey
+    }
+    if (typeof source.favoriteOnly === 'boolean') {
+      preferences.favoriteOnly = source.favoriteOnly
+    }
+    return preferences
+  } catch {
+    return null
+  }
+}
+
+function saveCardShopViewPreferences() {
+  const userID = activePreferenceUserID.value
+  if (userID === null || isRestoringViewPreferences.value || typeof localStorage === 'undefined') {
+    return
+  }
+
+  const preferences: CardShopViewPreferences = {
+    version: CARD_SHOP_VIEW_PREFERENCES_VERSION,
+    searchDraft: searchDraft.value,
+    searchTerms: searchTerms.value,
+    sortKey: sortKey.value,
+    favoriteOnly: favoriteOnly.value,
+  }
+  try {
+    localStorage.setItem(cardShopViewPreferencesStorageKey(userID), JSON.stringify(preferences))
+  } catch {
+    // Keep the page usable when browser storage is unavailable.
+  }
+}
+
+function cardShopViewPreferencesStorageKey(userID: number): string {
+  return `${CARD_SHOP_VIEW_PREFERENCES_STORAGE_PREFIX}:${userID}`
+}
+
+function normalizeCachedSearchTerms(value: unknown): string[] | null {
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const terms: string[] = []
+  const seen = new Set<string>()
+  for (const item of value) {
+    if (typeof item !== 'string') {
+      return null
+    }
+    const term = item.trim()
+    if (!term) {
+      continue
+    }
+    const key = normalizeSearchText(term)
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    terms.push(term)
+  }
+  return terms
+}
+
+function isCardShopSortKey(value: unknown): value is CardShopSortKey {
+  return (
+    value === 'relevance' ||
+    value === 'priceAsc' ||
+    value === 'stockDesc' ||
+    value === 'recent' ||
+    value === 'salesDesc'
+  )
+}
+
+function defaultQuickTags(): string[] {
+  return [...DEFAULT_QUICK_TAGS]
+}
+
+function tagsOrDefault(tags: string[] | null | undefined): string[] {
+  return Array.isArray(tags) && tags.length > 0 ? [...tags] : defaultQuickTags()
+}
+
+function openTagManager() {
+  editableTags.value = [...quickTags.value]
+  newTagDraft.value = ''
+  tagEditorError.value = null
+  isTagModalOpen.value = true
+}
+
+function closeTagManager() {
+  if (isSavingTags.value) {
+    return
+  }
+  isTagModalOpen.value = false
+}
+
+function addEditableTag() {
+  const result = normalizeQuickTagsForSave([...editableTags.value, newTagDraft.value])
+  if (result.error) {
+    tagEditorError.value = result.error
+    return
+  }
+  editableTags.value = result.tags
+  newTagDraft.value = ''
+  tagEditorError.value = null
+}
+
+function updateEditableTag(index: number, value: string) {
+  const nextTags = [...editableTags.value]
+  nextTags[index] = value
+  editableTags.value = nextTags
+}
+
+function removeEditableTag(index: number) {
+  editableTags.value = editableTags.value.filter((_, tagIndex) => tagIndex !== index)
+  tagEditorError.value = null
+}
+
+function startTagDrag(index: number, event: DragEvent) {
+  draggingTagIndex.value = index
+  tagEditorError.value = null
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.dropEffect = 'move'
+    event.dataTransfer.setData('text/plain', String(index))
+  }
+}
+
+function dragOverTag(index: number, event: DragEvent) {
+  event.preventDefault()
+  const fromIndex = draggingTagIndex.value
+  if (fromIndex === null || fromIndex === index) {
+    return
+  }
+  const nextTags = [...editableTags.value]
+  const tag = nextTags[fromIndex]
+  if (tag === undefined) {
+    return
+  }
+  nextTags.splice(fromIndex, 1)
+  nextTags.splice(index, 0, tag)
+  editableTags.value = nextTags
+  draggingTagIndex.value = index
+}
+
+function dropTag(event: DragEvent) {
+  event.preventDefault()
+  draggingTagIndex.value = null
+}
+
+function endTagDrag() {
+  draggingTagIndex.value = null
+}
+
+function restoreDefaultTags() {
+  editableTags.value = defaultQuickTags()
+  newTagDraft.value = ''
+  tagEditorError.value = null
+}
+
+async function saveQuickTags() {
+  const values = newTagDraft.value.trim() ? [...editableTags.value, newTagDraft.value] : editableTags.value
+  const result = normalizeQuickTagsForSave(values)
+  if (result.error) {
+    tagEditorError.value = result.error
+    return
+  }
+
+  isSavingTags.value = true
+  tagEditorError.value = null
+  try {
+    const tags = tagsEqual(result.tags, defaultQuickTags()) ? [] : result.tags
+    const response = await updateCardShopTags({ tags })
+    quickTags.value = tagsOrDefault(response.tags)
+    editableTags.value = [...quickTags.value]
+    newTagDraft.value = ''
+    isTagModalOpen.value = false
+  } catch (error) {
+    tagEditorError.value = errorText(error, '保存快速搜索标签失败', 'Failed to save quick search tags')
+  } finally {
+    isSavingTags.value = false
+  }
+}
+
+function normalizeQuickTagsForSave(values: string[]): { tags: string[]; error: string | null } {
+  if (values.length > MAX_QUICK_TAGS) {
+    return {
+      tags: [],
+      error: t(`快速搜索标签不能超过 ${MAX_QUICK_TAGS} 个`, `Quick search tags cannot exceed ${MAX_QUICK_TAGS}`),
+    }
+  }
+
+  const tags: string[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    const tag = value.trim()
+    if (!tag) {
+      return { tags: [], error: t('快速搜索标签不能为空', 'Quick search tags cannot be empty') }
+    }
+    if ([...tag].length > MAX_QUICK_TAG_LENGTH) {
+      return {
+        tags: [],
+        error: t(
+          `单个快速搜索标签不能超过 ${MAX_QUICK_TAG_LENGTH} 个字符`,
+          `A quick search tag cannot exceed ${MAX_QUICK_TAG_LENGTH} characters`,
+        ),
+      }
+    }
+    const key = normalizeSearchText(tag)
+    if (seen.has(key)) {
+      return { tags: [], error: t('快速搜索标签不能重复', 'Quick search tags cannot be duplicated') }
+    }
+    seen.add(key)
+    tags.push(tag)
+  }
+  return { tags, error: null }
+}
+
+function tagsEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((tag, index) => tag === right[index])
+}
+
+function applyQuickTag(tag: string) {
   const normalizedTag = normalizeSearchText(tag)
   const existingIndex = searchTerms.value.findIndex((term) => normalizeSearchText(term) === normalizedTag)
   if (existingIndex >= 0) {
@@ -469,16 +820,22 @@ function telegramHref(value: string | null | undefined): string | null {
           </label>
         </div>
         <div class="tag-row">
-          <span>{{ t('热门搜索标签:', 'Popular tags:') }}</span>
+          <span>{{ t('快速搜索标签:', 'Quick search tags:') }}</span>
           <NButton
-            v-for="tag in HOT_TAGS"
+            v-for="tag in quickTags"
             :key="tag"
             size="small"
             secondary
             :type="isSearchTermActive(tag) ? 'primary' : 'default'"
-            @click="applyHotTag(tag)"
+            @click="applyQuickTag(tag)"
           >
             {{ tag }}
+          </NButton>
+          <NButton class="tag-manage-button" size="small" secondary @click="openTagManager">
+            <template #icon>
+              <NIcon :component="Settings2" />
+            </template>
+            {{ t('管理标签', 'Manage tags') }}
           </NButton>
         </div>
         <div v-if="searchTerms.length > 0" class="selected-term-row">
@@ -644,6 +1001,93 @@ function telegramHref(value: string | null | undefined): string | null {
         </div>
       </section>
     </NSpin>
+
+    <NModal
+      v-model:show="isTagModalOpen"
+      preset="card"
+      :title="t('管理快速搜索标签', 'Manage quick search tags')"
+      class="quick-tag-modal"
+      :bordered="false"
+      :style="{ width: 'min(620px, calc(100vw - 32px))' }"
+      @mask-click="closeTagManager"
+      @esc="closeTagManager"
+    >
+      <div class="quick-tag-editor">
+        <div class="quick-tag-add-row">
+          <NInput
+            v-model:value="newTagDraft"
+            clearable
+            :maxlength="MAX_QUICK_TAG_LENGTH"
+            show-count
+            :placeholder="t('新增标签', 'New tag')"
+            @keydown.enter.prevent="addEditableTag"
+          />
+          <NButton secondary :disabled="editableTags.length >= MAX_QUICK_TAGS" @click="addEditableTag">
+            <template #icon>
+              <NIcon :component="PlusIcon" />
+            </template>
+            {{ t('新增', 'Add') }}
+          </NButton>
+        </div>
+
+        <NAlert v-if="tagEditorError" type="error" :show-icon="false">
+          {{ tagEditorError }}
+        </NAlert>
+
+        <div v-if="editableTags.length > 0" class="quick-tag-list">
+          <div
+            v-for="(tag, index) in editableTags"
+            :key="`${tag}-${index}`"
+            class="quick-tag-editor-item"
+            :class="{ 'is-dragging': draggingTagIndex === index }"
+            @dragover.prevent="dragOverTag(index, $event)"
+            @drop.prevent="dropTag"
+          >
+            <button
+              type="button"
+              class="quick-tag-drag-handle"
+              draggable="true"
+              :aria-label="t('拖动排序', 'Drag to reorder')"
+              @dragstart="startTagDrag(index, $event)"
+              @dragend="endTagDrag"
+            >
+              <NIcon :component="GripVertical" />
+            </button>
+            <NInput
+              :value="tag"
+              clearable
+              :maxlength="MAX_QUICK_TAG_LENGTH"
+              @update:value="updateEditableTag(index, $event)"
+            />
+            <NButton size="small" quaternary type="error" :aria-label="t('删除', 'Delete')" @click="removeEditableTag(index)">
+              <template #icon>
+                <NIcon :component="Trash2" />
+              </template>
+            </NButton>
+          </div>
+        </div>
+        <div v-else class="quick-tag-empty">
+          {{ t('保存后将显示默认快速搜索标签', 'Default quick search tags will be shown after saving') }}
+        </div>
+
+        <div class="quick-tag-footer">
+          <NButton secondary @click="restoreDefaultTags">
+            <template #icon>
+              <NIcon :component="RotateCcw" />
+            </template>
+            {{ t('恢复默认', 'Restore default') }}
+          </NButton>
+          <div class="quick-tag-footer-actions">
+            <NButton quaternary :disabled="isSavingTags" @click="closeTagManager">
+              {{ t('取消', 'Cancel') }}
+            </NButton>
+            <NButton type="primary" :loading="isSavingTags" @click="saveQuickTags">
+              {{ t('保存', 'Save') }}
+            </NButton>
+          </div>
+        </div>
+      </div>
+    </NModal>
   </section>
 </template>
 
@@ -737,6 +1181,22 @@ function telegramHref(value: string | null | undefined): string | null {
   border-radius: var(--cpa-radius-sm);
 }
 
+.tag-manage-button {
+  margin-left: 2px;
+  --n-border: 1px solid color-mix(in srgb, var(--cpa-primary) 20%, var(--cpa-border)) !important;
+  --n-border-hover: 1px solid color-mix(in srgb, var(--cpa-primary) 36%, var(--cpa-border)) !important;
+  --n-border-pressed: 1px solid color-mix(in srgb, var(--cpa-primary) 44%, var(--cpa-border)) !important;
+  --n-color: color-mix(in srgb, var(--cpa-primary) 12%, var(--cpa-surface-raised)) !important;
+  --n-color-hover: color-mix(in srgb, var(--cpa-primary) 18%, var(--cpa-surface-raised)) !important;
+  --n-color-pressed: color-mix(in srgb, var(--cpa-primary) 22%, var(--cpa-surface-raised)) !important;
+  --n-icon-color: var(--cpa-primary) !important;
+  --n-icon-color-hover: var(--cpa-primary) !important;
+  --n-text-color: var(--cpa-primary) !important;
+  --n-text-color-hover: var(--cpa-primary) !important;
+  --n-text-color-pressed: var(--cpa-primary) !important;
+  font-weight: 700;
+}
+
 .selected-term-row {
   padding-top: 2px;
 }
@@ -755,6 +1215,102 @@ function telegramHref(value: string | null | undefined): string | null {
 
 .favorite-error {
   border-radius: var(--cpa-radius);
+}
+
+.quick-tag-modal :deep(.n-card-header) {
+  padding-bottom: 10px;
+}
+
+.quick-tag-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.quick-tag-add-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.quick-tag-list {
+  display: grid;
+  max-height: min(420px, 52vh);
+  gap: 8px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.quick-tag-editor-item {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  border-radius: var(--cpa-radius-sm);
+  transition:
+    background 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.quick-tag-editor-item :deep(.n-button) {
+  width: 32px;
+  min-width: 32px;
+  padding-inline: 0;
+  border-radius: var(--cpa-radius-sm);
+}
+
+.quick-tag-editor-item.is-dragging {
+  background: color-mix(in srgb, var(--cpa-primary) 8%, transparent);
+  opacity: 0.72;
+}
+
+.quick-tag-drag-handle {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--cpa-radius-sm);
+  color: var(--cpa-text-muted);
+  background: transparent;
+  cursor: grab;
+}
+
+.quick-tag-drag-handle:hover,
+.quick-tag-drag-handle:focus-visible {
+  color: var(--cpa-primary);
+  background: var(--cpa-primary-wash);
+  outline: none;
+}
+
+.quick-tag-drag-handle:active {
+  cursor: grabbing;
+}
+
+.quick-tag-empty {
+  display: grid;
+  min-height: 64px;
+  place-items: center;
+  border: 1px dashed var(--cpa-border);
+  border-radius: var(--cpa-radius-sm);
+  color: var(--cpa-text-muted);
+  background: var(--cpa-surface-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.quick-tag-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.quick-tag-footer-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .card-shop-metrics {
@@ -812,6 +1368,28 @@ function telegramHref(value: string | null | undefined): string | null {
   --favorite-bg: color-mix(in srgb, #fffbeb 68%, var(--cpa-surface));
   --favorite-panel: color-mix(in srgb, #fffbeb 78%, var(--cpa-surface-muted));
   --favorite-product-bg: color-mix(in srgb, #fef3c7 46%, var(--cpa-surface-raised));
+  --favorite-link-bg: color-mix(in srgb, #fffbeb 62%, transparent);
+  --favorite-link-bg-hover: color-mix(in srgb, #fef3c7 56%, transparent);
+  --favorite-chip-bg: color-mix(in srgb, #fffbeb 74%, var(--cpa-surface-muted));
+  --favorite-chip-strong-bg: color-mix(in srgb, #fef3c7 62%, var(--cpa-surface-muted));
+  border-color: var(--favorite-border);
+  background: var(--favorite-bg);
+}
+
+:root.dark .shop-card.is-favorite {
+  --favorite-ink: #f7f2e8;
+  --favorite-text: #cdbf9f;
+  --favorite-muted: #bfae8e;
+  --favorite-accent: #f4c56a;
+  --favorite-border: rgb(201 145 54 / 45%);
+  --favorite-bg: linear-gradient(180deg, rgb(126 87 28 / 28%), rgb(56 43 25 / 52%)),
+    var(--cpa-surface);
+  --favorite-panel: rgb(48 42 30 / 78%);
+  --favorite-product-bg: rgb(58 48 30 / 82%);
+  --favorite-link-bg: rgb(245 190 90 / 10%);
+  --favorite-link-bg-hover: rgb(245 190 90 / 16%);
+  --favorite-chip-bg: rgb(44 39 31 / 86%);
+  --favorite-chip-strong-bg: rgb(70 53 27 / 88%);
   border-color: var(--favorite-border);
   background: var(--favorite-bg);
 }
@@ -868,13 +1446,13 @@ function telegramHref(value: string | null | undefined): string | null {
 
 .shop-card.is-favorite .external-link {
   border-color: color-mix(in srgb, #d97706 24%, var(--cpa-border));
-  color: var(--favorite-muted);
-  background: color-mix(in srgb, #fffbeb 62%, transparent);
+  color: var(--favorite-accent);
+  background: var(--favorite-link-bg);
 }
 
 .shop-card.is-favorite .external-link:hover {
   border-color: color-mix(in srgb, #d97706 38%, var(--cpa-border));
-  background: color-mix(in srgb, #fef3c7 56%, transparent);
+  background: var(--favorite-link-bg-hover);
 }
 
 .shop-url {
@@ -1050,13 +1628,13 @@ function telegramHref(value: string | null | undefined): string | null {
 .shop-card.is-favorite .product-meta span {
   border-color: color-mix(in srgb, #d97706 16%, var(--cpa-border));
   color: var(--favorite-muted);
-  background: color-mix(in srgb, #fffbeb 74%, var(--cpa-surface-muted));
+  background: var(--favorite-chip-bg);
 }
 
 .shop-card.is-favorite .product-meta span:first-child {
   border-color: color-mix(in srgb, #d97706 28%, var(--cpa-border));
   color: var(--favorite-accent);
-  background: color-mix(in srgb, #fef3c7 62%, var(--cpa-surface-muted));
+  background: var(--favorite-chip-strong-bg);
 }
 
 .empty-state {
@@ -1104,6 +1682,23 @@ function telegramHref(value: string | null | undefined): string | null {
 @media (max-width: 460px) {
   .card-shop-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .quick-tag-add-row,
+  .quick-tag-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-tag-add-row,
+  .quick-tag-footer,
+  .quick-tag-footer-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .quick-tag-footer-actions :deep(.n-button),
+  .quick-tag-footer > :deep(.n-button) {
+    width: 100%;
   }
 }
 </style>

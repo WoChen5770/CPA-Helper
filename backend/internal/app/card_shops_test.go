@@ -270,6 +270,108 @@ func TestCardShopFavoritesRequireLoginAndValidShopKey(t *testing.T) {
 	}, cookies, http.StatusUnprocessableEntity)
 }
 
+func TestCardShopTagsAreScopedToCurrentUser(t *testing.T) {
+	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
+
+	app, err := backendApp.New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+
+	handler := app.Routes()
+	adminCookies := requestJSON(t, handler, http.MethodPost, "/api/auth/setup", map[string]any{
+		"username": "admin",
+		"password": "test-password",
+		"nickname": "Admin",
+	}, nil, nil)
+	requestJSON(t, handler, http.MethodPost, "/api/users", map[string]any{
+		"username": "member",
+		"password": "member-password",
+		"nickname": "Member",
+		"is_admin": false,
+	}, adminCookies, nil)
+	memberCookies := requestJSON(t, handler, http.MethodPost, "/api/auth/login", map[string]any{
+		"username": "member",
+		"password": "member-password",
+	}, nil, nil)
+
+	var tags struct {
+		Tags []string `json:"tags"`
+	}
+	requestJSON(t, handler, http.MethodGet, "/api/card-shops/tags", nil, adminCookies, &tags)
+	if len(tags.Tags) != 0 {
+		t.Fatalf("initial admin tags = %#v, want empty", tags.Tags)
+	}
+
+	requestJSON(t, handler, http.MethodPut, "/api/card-shops/tags", map[string]any{
+		"tags": []string{" Codex ", "PayPal", "实体卡"},
+	}, adminCookies, &tags)
+	if got, want := tags.Tags, []string{"Codex", "PayPal", "实体卡"}; !stringSlicesEqual(got, want) {
+		t.Fatalf("admin tags = %#v, want %#v", got, want)
+	}
+
+	requestJSON(t, handler, http.MethodGet, "/api/card-shops/tags", nil, memberCookies, &tags)
+	if len(tags.Tags) != 0 {
+		t.Fatalf("initial member tags = %#v, want empty", tags.Tags)
+	}
+
+	requestJSON(t, handler, http.MethodPut, "/api/card-shops/tags", map[string]any{
+		"tags": []string{"Team"},
+	}, memberCookies, &tags)
+	if got, want := tags.Tags, []string{"Team"}; !stringSlicesEqual(got, want) {
+		t.Fatalf("member tags = %#v, want %#v", got, want)
+	}
+
+	requestJSON(t, handler, http.MethodGet, "/api/card-shops/tags", nil, adminCookies, &tags)
+	if got, want := tags.Tags, []string{"Codex", "PayPal", "实体卡"}; !stringSlicesEqual(got, want) {
+		t.Fatalf("admin tags after member update = %#v, want %#v", got, want)
+	}
+
+	requestJSON(t, handler, http.MethodPut, "/api/card-shops/tags", map[string]any{
+		"tags": []string{},
+	}, adminCookies, &tags)
+	if len(tags.Tags) != 0 {
+		t.Fatalf("admin tags after clear = %#v, want empty", tags.Tags)
+	}
+}
+
+func TestCardShopTagsRequireLoginAndValidTags(t *testing.T) {
+	t.Setenv("CPA_HELPER_DATA_DIR", t.TempDir())
+
+	app, err := backendApp.New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer app.Close()
+
+	handler := app.Routes()
+	cookies := requestJSON(t, handler, http.MethodPost, "/api/auth/setup", map[string]any{
+		"username": "admin",
+		"password": "test-password",
+		"nickname": "Admin",
+	}, nil, nil)
+
+	requestJSONExpectStatus(t, handler, http.MethodGet, "/api/card-shops/tags", nil, nil, http.StatusUnauthorized)
+	requestJSONExpectStatus(t, handler, http.MethodPut, "/api/card-shops/tags", map[string]any{
+		"tags": []string{"   "},
+	}, cookies, http.StatusUnprocessableEntity)
+	requestJSONExpectStatus(t, handler, http.MethodPut, "/api/card-shops/tags", map[string]any{
+		"tags": []string{"Plus", "plus"},
+	}, cookies, http.StatusUnprocessableEntity)
+	requestJSONExpectStatus(t, handler, http.MethodPut, "/api/card-shops/tags", map[string]any{
+		"tags": []string{"123456789012345678901234567890123"},
+	}, cookies, http.StatusUnprocessableEntity)
+
+	tooManyTags := make([]string, 31)
+	for index := range tooManyTags {
+		tooManyTags[index] = "tag-" + string(rune('a'+index))
+	}
+	requestJSONExpectStatus(t, handler, http.MethodPut, "/api/card-shops/tags", map[string]any{
+		"tags": tooManyTags,
+	}, cookies, http.StatusUnprocessableEntity)
+}
+
 func stringSlicesEqual(left, right []string) bool {
 	if len(left) != len(right) {
 		return false

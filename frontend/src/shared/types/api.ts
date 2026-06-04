@@ -124,6 +124,14 @@ export interface CardShopFavoriteUpdatePayload {
   favorite: boolean
 }
 
+export interface CardShopTagsResponse {
+  tags: string[]
+}
+
+export interface CardShopTagsUpdatePayload {
+  tags: string[]
+}
+
 export interface CodexKeeperPriorityRule {
   account_type: string
   priority: number
