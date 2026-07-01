@@ -21,6 +21,7 @@ import {
   BarChart3,
   Cpu,
   DollarSign,
+  ExternalLink,
   Github,
   KeyRound,
   Languages,
@@ -39,6 +40,7 @@ import {
 } from 'lucide-vue-next'
 
 import { getMe, isAuthUser, logout } from '@/features/auth/api/authApi'
+import { getSettings } from '@/features/settings/api/settingsApi'
 import { useCurrentUser } from '@/features/auth/state/currentUser'
 import { useThemePreference } from '@/shared/composables/useThemePreference'
 import { useI18n } from '@/shared/i18n'
@@ -57,6 +59,7 @@ const { currentUser, setCurrentUser } = useCurrentUser()
 const hasLoadedUser = ref(currentUser.value !== null)
 const { isDark, preference, setThemePreference, toggleTheme } = useThemePreference()
 const { language, t, toggleLanguage } = useI18n()
+const cpamcUrl = ref('')
 let navigationFeedbackTimer: number | undefined
 let routeTransitionReleaseTimer: number | undefined
 
@@ -88,8 +91,18 @@ async function refreshCurrentUser() {
   }
 }
 
+async function loadCPAMCUrl() {
+  try {
+    const settings = await getSettings()
+    cpamcUrl.value = settings.cpamc_url
+  } catch {
+    cpamcUrl.value = ''
+  }
+}
+
 onMounted(() => {
   void refreshCurrentUser()
+  void loadCPAMCUrl()
 })
 
 function handleAccountUpdated(event: Event) {
@@ -171,6 +184,16 @@ const appVersion = formatAppVersion(import.meta.env.VITE_APP_VERSION)
 
 const menuOptions = computed<MenuOption[]>(() => {
   const groups: MenuOption[] = []
+
+  // CPAMC 外部链接（如果配置了）
+  if (cpamcUrl.value) {
+    groups.push({
+      label: 'CPAMC',
+      key: 'cpamc-external',
+      icon: renderIcon(ExternalLink),
+    })
+  }
+
   if (isAdmin.value) {
     groups.push({
       type: 'group',
@@ -247,6 +270,13 @@ function finishRouteTransition() {
 
 async function handleMenuUpdate(key: string) {
   drawerOpen.value = false
+
+  // 处理 CPAMC 外部链接
+  if (key === 'cpamc-external' && cpamcUrl.value) {
+    window.open(cpamcUrl.value, '_blank', 'noopener,noreferrer')
+    return
+  }
+
   if (key === route.path) {
     return
   }

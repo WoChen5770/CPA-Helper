@@ -40,6 +40,7 @@ const settingsForm = reactive({
   poll_interval_seconds: 2,
   retry_interval_seconds: 10,
   base_path: '',
+  cpamc_url: '',
 })
 
 const remoteStatusType = computed(() => {
@@ -80,6 +81,7 @@ async function refresh() {
     settingsForm.poll_interval_seconds = settings.poll_interval_seconds
     settingsForm.retry_interval_seconds = settings.retry_interval_seconds
     settingsForm.base_path = settings.base_path
+    settingsForm.cpamc_url = settings.cpamc_url
     settingsForm.retry_interval_seconds = settings.retry_interval_seconds
     collectorStatus.value = status
   } catch (error) {
@@ -101,6 +103,7 @@ async function saveSettings() {
       poll_interval_seconds: settingsForm.poll_interval_seconds,
       retry_interval_seconds: settingsForm.retry_interval_seconds,
       base_path: settingsForm.base_path,
+      cpamc_url: settingsForm.cpamc_url,
     }
     const saved = await updateSettings(payload)
     settingsForm.management_key = saved.management_key
@@ -207,9 +210,17 @@ onMounted(refresh)
                 <div class="field-label">{{ t('根路径（可选）', 'Base path (optional)') }}</div>
                 <NInput
                   v-model:value="settingsForm.base_path"
-                  :placeholder="t('例如：my-app（用于nginx反代）', 'Example: my-app (for nginx reverse proxy)')"
+                  :placeholder="t('例如：cpa-helper', 'Example: cpa-helper')"
                 />
                 <div class="form-help">{{ t('设置后访问路径为 http://domain.com/根路径/', 'After setting, the access path will be http://domain.com/base-path/') }}</div>
+              </div>
+              <div class="field-stack">
+                <div class="field-label">{{ t('CPAMC 地址（可选）', 'CPAMC URL (optional)') }}</div>
+                <NInput
+                  v-model:value="settingsForm.cpamc_url"
+                  :placeholder="t('例如：https://yourdomain.com/management.html#/', 'Example: https://api-proxy.jaycq.com/management.html#/')"
+                />
+                <div class="form-help">{{ t('配置后左侧菜单显示 CPAMC 快捷入口', 'After setting, the left menu will show CPAMC quick entry') }}</div>
               </div>
             </div>
           </NForm>

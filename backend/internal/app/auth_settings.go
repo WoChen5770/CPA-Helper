@@ -266,6 +266,7 @@ type settingsUpdateRequest struct {
 	PollIntervalSeconds  *float64 `json:"poll_interval_seconds"`
 	RetryIntervalSeconds *float64 `json:"retry_interval_seconds"`
 	BasePath             *string  `json:"base_path"`
+	CPAMCUrl             *string  `json:"cpamc_url"`
 }
 
 type modelRequestTestPayload struct {
@@ -353,6 +354,9 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) error {
 		if payload.BasePath != nil {
 			cfg.BasePath = strings.Trim(strings.TrimSpace(*payload.BasePath), "/")
 		}
+		if payload.CPAMCUrl != nil {
+			cfg.CPAMCUrl = strings.TrimSpace(*payload.CPAMCUrl)
+		}
 		if err := a.saveConfig(r.Context(), cfg); err != nil {
 			return err
 		}
@@ -376,6 +380,7 @@ func settingsResponse(cfg AppConfig) map[string]any {
 		"poll_interval_seconds":  collector.PollIntervalSeconds,
 		"retry_interval_seconds": collector.RetryIntervalSeconds,
 		"base_path":              cfg.BasePath,
+		"cpamc_url":              cfg.CPAMCUrl,
 	}
 }
 

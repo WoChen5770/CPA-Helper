@@ -38,6 +38,7 @@ export interface SettingsResponse {
   poll_interval_seconds: number
   retry_interval_seconds: number
   base_path: string
+  cpamc_url: string
 }
 
 export interface SettingsUpdatePayload {
@@ -50,6 +51,7 @@ export interface SettingsUpdatePayload {
   poll_interval_seconds?: number
   retry_interval_seconds?: number
   base_path?: string
+  cpamc_url?: string
 }
 
 export interface ModelRequestGuide {
