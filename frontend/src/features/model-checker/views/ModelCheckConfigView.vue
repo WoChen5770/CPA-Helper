@@ -99,7 +99,7 @@ const refreshStatus = async () => {
   try {
     const status = await getModelCheckerStatus()
     daemonRunning.value = status.daemon_running
-    logs.value = status.logs
+    logs.value = status.logs.slice().reverse() // 倒序显示日志
   } catch (error: any) {
     // 静默失败
   } finally {
