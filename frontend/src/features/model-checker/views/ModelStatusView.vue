@@ -4,7 +4,7 @@ import { NCard, NSpace, NDataTable, NTag, NButton, NStatistic, useMessage } from
 import type { DataTableColumns } from 'naive-ui'
 import { useI18n } from '@/shared/i18n'
 import type { TrackedModel } from '@/shared/types/api'
-import { getTrackedModels, getModelCheckerStatus, checkTrackedModel } from '../api/modelCheckerApi'
+import { getTrackedModels, getModelCheckerStatus } from '../api/modelCheckerApi'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -53,17 +53,8 @@ const loadData = async () => {
   }
 }
 
-const handleCheckModel = async (modelId: string) => {
-  try {
-    await checkTrackedModel(modelId)
-    message.success(t('检查已启动', 'Check started'))
-    setTimeout(loadData, 1000)
-  } catch (error: any) {
-    message.error(error.message || t('启动失败', 'Failed to start'))
-  }
-}
 
-const getStatusType = (status: string) => {
+const getStatusType = (status: string | null) => {
   switch (status) {
     case 'available':
       return 'success'
@@ -76,7 +67,7 @@ const getStatusType = (status: string) => {
   }
 }
 
-const getStatusText = (status: string) => {
+const getStatusText = (status: string | null) => {
   switch (status) {
     case 'available':
       return t('正常', 'Available')
@@ -135,10 +126,10 @@ const columns: DataTableColumns<TrackedModel> = [
     },
   },
   {
-    title: () => t('巡检间隔', 'Interval'),
-    key: 'check_interval_minutes',
-    width: 120,
-    render: (row) => `${row.check_interval_minutes} ${t('分钟', 'min')}`,
+    title: () => t('调度表达式', 'Schedule Cron'),
+    key: 'schedule_cron',
+    width: 140,
+    render: (row) => row.schedule_cron || '-',
   },
   {
     title: () => t('最后检查时间', 'Last Checked'),
@@ -151,21 +142,6 @@ const columns: DataTableColumns<TrackedModel> = [
     key: 'last_available_at',
     width: 180,
     render: (row) => formatTime(row.last_available_at),
-  },
-  {
-    title: () => t('操作', 'Actions'),
-    key: 'actions',
-    width: 120,
-    render: (row) => {
-      return h(
-        NButton,
-        {
-          size: 'small',
-          onClick: () => handleCheckModel(row.model_id),
-        },
-        { default: () => t('立即检查', 'Check Now') }
-      )
-    },
   },
 ]
 

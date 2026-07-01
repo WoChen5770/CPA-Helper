@@ -1,19 +1,31 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
-import { NCard, NSpace, NButton, NSwitch, NDataTable, NInput, NInputNumber, NTag, useMessage, useDialog } from 'naive-ui'
+import { ref, onMounted, computed, h } from 'vue'
+import {
+  NCard,
+  NSpace,
+  NButton,
+  NSwitch,
+  NDataTable,
+  NInput,
+  NInputNumber,
+  NSelect,
+  NTag,
+  useMessage,
+  useDialog
+} from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { useI18n } from '@/shared/i18n'
-import type { TrackedModel } from '@/shared/types/api'
+import type { TrackedModel, ModelCheckerConfig } from '@/shared/types/api'
 import {
+  getModelCheckerSettings,
+  updateModelCheckerSettings,
   getModelCheckerStatus,
   getTrackedModels,
   addTrackedModel,
   updateTrackedModel,
   deleteTrackedModel,
-  checkTrackedModel,
-  startModelChecker,
-  stopModelChecker,
-  runModelCheckerOnce,
+  startModelSchedule,
+  stopModelSchedule,
   clearModelCheckerLogs,
 } from '../api/modelCheckerApi'
 import { listAvailableModels } from '@/features/models/api/availableModelsApi'
@@ -28,19 +40,40 @@ const statusLoading = ref(false)
 const daemonRunning = ref(false)
 const logs = ref<string[]>([])
 const trackedModels = ref<TrackedModel[]>([])
+const globalConfig = ref<ModelCheckerConfig>({
+  timeout_seconds: 30,
+  max_retries: 2,
+  alert_on_unavailable: true,
+})
 const availableModels = ref<AvailableModel[]>([])
 const selectedModelId = ref('')
 
-// 轮询获取状态
 let statusInterval: number | null = null
 
 onMounted(async () => {
+  await loadGlobalConfig()
   await loadTrackedModels()
   await loadAvailableModels()
   await refreshStatus()
-  // 每3秒刷新一次状态
   statusInterval = window.setInterval(refreshStatus, 3000)
 })
+
+const loadGlobalConfig = async () => {
+  try {
+    globalConfig.value = await getModelCheckerSettings()
+  } catch (error: any) {
+    message.error(error.message || t('加载全局配置失败', 'Failed to load global config'))
+  }
+}
+
+const handleSaveGlobalConfig = async () => {
+  try {
+    await updateModelCheckerSettings(globalConfig.value)
+    message.success(t('全局配置已保存', 'Global config saved'))
+  } catch (error: any) {
+    message.error(error.message || t('保存失败', 'Failed to save'))
+  }
+}
 
 const loadTrackedModels = async () => {
   loading.value = true
@@ -69,39 +102,9 @@ const refreshStatus = async () => {
     daemonRunning.value = status.daemon_running
     logs.value = status.logs
   } catch (error: any) {
-    // 静默失败，避免频繁弹窗
+    // 静默失败
   } finally {
     statusLoading.value = false
-  }
-}
-
-const handleStartDaemon = async () => {
-  try {
-    await startModelChecker()
-    message.success(t('Daemon 已启动', 'Daemon started'))
-    await refreshStatus()
-  } catch (error: any) {
-    message.error(error.message || t('启动失败', 'Failed to start'))
-  }
-}
-
-const handleStopDaemon = async () => {
-  try {
-    await stopModelChecker()
-    message.success(t('Daemon 已停止', 'Daemon stopped'))
-    await refreshStatus()
-  } catch (error: any) {
-    message.error(error.message || t('停止失败', 'Failed to stop'))
-  }
-}
-
-const handleRunOnce = async () => {
-  try {
-    await runModelCheckerOnce()
-    message.success(t('检查已启动', 'Check started'))
-    setTimeout(refreshStatus, 1000)
-  } catch (error: any) {
-    message.error(error.message || t('启动失败', 'Failed to start'))
   }
 }
 
@@ -128,6 +131,7 @@ const handleAddModel = async () => {
     await addTrackedModel({
       model_id: model.id,
       provider: model.owner || 'unknown',
+      schedule_cron: '0 * * * *',
     })
     message.success(t('模型已添加到监控', 'Model added to monitoring'))
     selectedModelId.value = ''
@@ -141,10 +145,7 @@ const handleUpdateModel = async (model: TrackedModel) => {
   try {
     await updateTrackedModel(model.model_id, {
       enabled: model.enabled,
-      check_interval_minutes: model.check_interval_minutes,
-      timeout_seconds: model.timeout_seconds,
-      max_retries: model.max_retries,
-      alert_on_unavailable: model.alert_on_unavailable,
+      schedule_cron: model.schedule_cron,
     })
     message.success(t('配置已保存', 'Configuration saved'))
     await loadTrackedModels()
@@ -153,13 +154,23 @@ const handleUpdateModel = async (model: TrackedModel) => {
   }
 }
 
-const handleCheckModel = async (modelId: string) => {
+const handleStartSchedule = async (modelId: string) => {
   try {
-    await checkTrackedModel(modelId)
-    message.success(t('检查已启动', 'Check started'))
-    setTimeout(refreshStatus, 1000)
+    await startModelSchedule(modelId)
+    message.success(t('调度已启动', 'Schedule started'))
+    await refreshStatus()
   } catch (error: any) {
     message.error(error.message || t('启动失败', 'Failed to start'))
+  }
+}
+
+const handleStopSchedule = async (modelId: string) => {
+  try {
+    await stopModelSchedule(modelId)
+    message.success(t('调度已停止', 'Schedule stopped'))
+    await refreshStatus()
+  } catch (error: any) {
+    message.error(error.message || t('停止失败', 'Failed to stop'))
   }
 }
 
@@ -220,71 +231,34 @@ const columns: DataTableColumns<TrackedModel> = [
     },
   },
   {
-    title: () => t('巡检间隔(分钟)', 'Interval (min)'),
-    key: 'check_interval_minutes',
-    width: 140,
+    title: () => t('Cron 表达式', 'Schedule Cron'),
+    key: 'schedule_cron',
+    width: 150,
     render: (row) => {
-      return h(NInputNumber, {
-        value: row.check_interval_minutes,
-        min: 1,
-        max: 1440,
+      return h(NInput, {
+        value: row.schedule_cron,
         size: 'small',
-        onUpdateValue: (value: number | null) => {
-          if (value) row.check_interval_minutes = value
+        onUpdateValue: (value: string) => {
+          row.schedule_cron = value
         },
+        onBlur: () => handleUpdateModel(row),
       })
     },
   },
   {
-    title: () => t('超时(秒)', 'Timeout (s)'),
-    key: 'timeout_seconds',
-    width: 120,
-    render: (row) => {
-      return h(NInputNumber, {
-        value: row.timeout_seconds,
-        min: 1,
-        max: 300,
-        size: 'small',
-        onUpdateValue: (value: number | null) => {
-          if (value) row.timeout_seconds = value
-        },
-      })
-    },
-  },
-  {
-    title: () => t('最大重试', 'Max Retries'),
-    key: 'max_retries',
+    title: () => t('状态', 'Status'),
+    key: 'last_status',
     width: 100,
     render: (row) => {
-      return h(NInputNumber, {
-        value: row.max_retries,
-        min: 0,
-        max: 10,
-        size: 'small',
-        onUpdateValue: (value: number | null) => {
-          if (value !== null) row.max_retries = value
-        },
-      })
-    },
-  },
-  {
-    title: () => t('告警', 'Alert'),
-    key: 'alert_on_unavailable',
-    width: 80,
-    render: (row) => {
-      return h(NSwitch, {
-        value: row.alert_on_unavailable,
-        onUpdateValue: (value: boolean) => {
-          row.alert_on_unavailable = value
-          handleUpdateModel(row)
-        },
-      })
+      const status = row.last_status || 'unknown'
+      const type = status === 'available' ? 'success' : status === 'unavailable' ? 'error' : 'default'
+      return h(NTag, { type, size: 'small' }, { default: () => status })
     },
   },
   {
     title: () => t('操作', 'Actions'),
     key: 'actions',
-    width: 200,
+    width: 250,
     render: (row) => {
       return h(
         NSpace,
@@ -295,17 +269,17 @@ const columns: DataTableColumns<TrackedModel> = [
               NButton,
               {
                 size: 'small',
-                onClick: () => handleUpdateModel(row),
+                onClick: () => handleStartSchedule(row.model_id),
               },
-              { default: () => t('保存', 'Save') }
+              { default: () => t('启动', 'Start') }
             ),
             h(
               NButton,
               {
                 size: 'small',
-                onClick: () => handleCheckModel(row.model_id),
+                onClick: () => handleStopSchedule(row.model_id),
               },
-              { default: () => t('立即检查', 'Check Now') }
+              { default: () => t('停止', 'Stop') }
             ),
             h(
               NButton,
@@ -325,68 +299,73 @@ const columns: DataTableColumns<TrackedModel> = [
 </script>
 
 <script lang="ts">
-import { h } from 'vue'
 export default { name: 'ModelCheckConfigView' }
 </script>
 
 <template>
   <div class="model-check-config-view">
     <NSpace vertical :size="16">
-      <!-- 全局控制 -->
-      <NCard :title="t('全局设置', 'Global Settings')">
-        <NSpace :size="12">
-          <NButton
-            :type="daemonRunning ? 'error' : 'primary'"
-            :loading="statusLoading"
-            @click="daemonRunning ? handleStopDaemon() : handleStartDaemon()"
-          >
-            {{ daemonRunning ? t('停止 Daemon', 'Stop Daemon') : t('启动 Daemon', 'Start Daemon') }}
+      <!-- 全局配置 -->
+      <NCard :title="t('全局配置', 'Global Configuration')">
+        <NSpace vertical :size="12">
+          <div class="config-item">
+            <label>{{ t('超时时间 (秒)', 'Timeout (seconds)') }}</label>
+            <NInputNumber
+              v-model:value="globalConfig.timeout_seconds"
+              :min="1"
+              :max="300"
+              style="width: 150px"
+            />
+          </div>
+          <div class="config-item">
+            <label>{{ t('最大重试次数', 'Max Retries') }}</label>
+            <NInputNumber
+              v-model:value="globalConfig.max_retries"
+              :min="0"
+              :max="10"
+              style="width: 150px"
+            />
+          </div>
+          <div class="config-item">
+            <label>{{ t('不可用时告警', 'Alert on Unavailable') }}</label>
+            <NSwitch v-model:value="globalConfig.alert_on_unavailable" />
+          </div>
+          <NButton type="primary" @click="handleSaveGlobalConfig">
+            {{ t('保存配置', 'Save Configuration') }}
           </NButton>
-          <NButton @click="handleRunOnce">
-            {{ t('立即检查所有模型', 'Check All Models') }}
-          </NButton>
-          <NTag :type="daemonRunning ? 'success' : 'default'">
-            {{ daemonRunning ? t('Daemon 运行中', 'Daemon Running') : t('Daemon 已停止', 'Daemon Stopped') }}
-          </NTag>
         </NSpace>
       </NCard>
 
-      <!-- 日志区域 -->
-      <NCard :title="t('日志', 'Logs')">
-        <template #header-extra>
+      <!-- 状态信息 -->
+      <NCard :title="t('状态', 'Status')">
+        <NSpace vertical :size="12">
+          <NTag :type="daemonRunning ? 'success' : 'default'">
+            {{ daemonRunning ? t('有调度运行中', 'Schedules Running') : t('没有调度运行', 'No Schedules') }}
+          </NTag>
           <NButton size="small" @click="handleClearLogs">
             {{ t('清除日志', 'Clear Logs') }}
           </NButton>
-        </template>
-        <div class="logs-container">
-          <div v-if="logs.length === 0" class="logs-empty">
-            {{ t('暂无日志', 'No logs') }}
-          </div>
-          <div v-else class="logs-content">
-            <div v-for="(log, index) in logs" :key="index" class="log-line">
-              {{ log }}
-            </div>
-          </div>
-        </div>
+        </NSpace>
       </NCard>
 
       <!-- 添加模型 -->
-      <NCard :title="t('添加到监控', 'Add to Monitoring')">
-        <NSpace :size="12">
-          <select v-model="selectedModelId" class="model-select">
-            <option value="">{{ t('选择模型', 'Select Model') }}</option>
-            <option v-for="opt in availableModelOptions" :key="opt.value" :value="opt.value">
-              {{ opt.label }}
-            </option>
-          </select>
-          <NButton type="primary" :disabled="!selectedModelId" @click="handleAddModel">
+      <NCard :title="t('添加监控模型', 'Add Model to Monitoring')">
+        <NSpace>
+          <NSelect
+            v-model:value="selectedModelId"
+            :options="availableModelOptions"
+            :placeholder="t('选择模型', 'Select model')"
+            filterable
+            style="width: 400px"
+          />
+          <NButton type="primary" @click="handleAddModel">
             {{ t('添加', 'Add') }}
           </NButton>
         </NSpace>
       </NCard>
 
-      <!-- 已监控模型列表 -->
-      <NCard :title="t('已监控模型', 'Monitored Models')">
+      <!-- 监控模型列表 -->
+      <NCard :title="t('监控模型', 'Monitored Models')">
         <NDataTable
           :columns="columns"
           :data="trackedModels"
@@ -394,6 +373,18 @@ export default { name: 'ModelCheckConfigView' }
           :pagination="false"
           :row-key="(row: TrackedModel) => row.model_id"
         />
+      </NCard>
+
+      <!-- 日志 -->
+      <NCard :title="t('日志', 'Logs')">
+        <div class="logs-container">
+          <div v-for="(log, index) in logs" :key="index" class="log-line">
+            {{ log }}
+          </div>
+          <div v-if="logs.length === 0" class="log-line empty">
+            {{ t('暂无日志', 'No logs') }}
+          </div>
+        </div>
       </NCard>
     </NSpace>
   </div>
@@ -406,49 +397,34 @@ export default { name: 'ModelCheckConfigView' }
   margin: 0 auto;
 }
 
+.config-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.config-item label {
+  min-width: 180px;
+  font-weight: 500;
+}
+
 .logs-container {
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-  padding: 12px;
-  border-radius: 4px;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-  font-size: 13px;
   max-height: 400px;
   overflow-y: auto;
-}
-
-.logs-empty {
-  text-align: center;
-  color: #888;
-  padding: 20px 0;
-}
-
-.logs-content {
-  white-space: pre-wrap;
-  word-break: break-word;
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-size: 13px;
+  background: #f5f5f5;
+  padding: 12px;
+  border-radius: 4px;
 }
 
 .log-line {
   padding: 2px 0;
-  line-height: 1.5;
+  color: #333;
 }
 
-.model-select {
-  min-width: 300px;
-  padding: 6px 12px;
-  border: 1px solid #d9d9d9;
-  border-radius: 3px;
-  font-size: 14px;
-  background-color: white;
-  cursor: pointer;
-}
-
-.model-select:focus {
-  outline: none;
-  border-color: #18a058;
-}
-
-:deep(.n-data-table) {
-  font-size: 14px;
+.log-line.empty {
+  color: #999;
+  font-style: italic;
 }
 </style>
