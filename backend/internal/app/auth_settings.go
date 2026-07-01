@@ -272,7 +272,6 @@ type settingsUpdateRequest struct {
 	BatchSize            *int     `json:"batch_size"`
 	PollIntervalSeconds  *float64 `json:"poll_interval_seconds"`
 	RetryIntervalSeconds *float64 `json:"retry_interval_seconds"`
-	BasePath             *string  `json:"base_path"`
 	CPAMCUrl             *string  `json:"cpamc_url"`
 }
 
@@ -358,9 +357,6 @@ func (a *App) handleSettings(w http.ResponseWriter, r *http.Request) error {
 			}
 			cfg.Collector.RetryIntervalSeconds = *payload.RetryIntervalSeconds
 		}
-		if payload.BasePath != nil {
-			cfg.BasePath = strings.Trim(strings.TrimSpace(*payload.BasePath), "/")
-		}
 		if payload.CPAMCUrl != nil {
 			cfg.CPAMCUrl = strings.TrimSpace(*payload.CPAMCUrl)
 		}
@@ -386,7 +382,6 @@ func settingsResponse(cfg AppConfig) map[string]any {
 		"batch_size":             collector.BatchSize,
 		"poll_interval_seconds":  collector.PollIntervalSeconds,
 		"retry_interval_seconds": collector.RetryIntervalSeconds,
-		"base_path":              cfg.BasePath,
 		"cpamc_url":              cfg.CPAMCUrl,
 	}
 }

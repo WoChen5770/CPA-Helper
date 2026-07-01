@@ -1,6 +1,6 @@
 <div align="center">
   <img src="frontend/public/logo.png" alt="CPA-Helper Logo" width="104" height="104" />
-  <h1>CPA-Helper</h1>
+  <h1>CPA-Helper（Fork 版本）</h1>
   <p><strong>面向 CLIProxyAPI 的本地自托管多用户管理面板</strong></p>
   <p>用量统计 · 请求追踪 · 用户余额 · API 密钥管理 · 模型价格维护 · Codex 凭证巡检</p>
   <p>
@@ -16,6 +16,49 @@
     <a href="https://linux.do"><img src="https://shorturl.at/ggSqS" alt="LINUX DO" /></a>
   </p>
 </div>
+
+---
+
+## 🎯 Fork 增强功能
+
+本 Fork 基于原项目 [CPA-Helper](https://github.com/Yzyy99/CPA-Helper) 增加了以下特性：
+
+### ✨ 零配置子路径部署支持
+
+完美支持部署在任意子路径下（如 `/cpa-helper`、`/admin` 等），无需手动配置：
+
+- **自动 base path 检测**：前端自动从 URL 中检测部署路径
+- **相对路径解析**：所有 API 请求和静态资源使用相对路径配合 HTML `<base>` 标签
+- **双模式路由**：后端同时支持 `/api/*` 和 `/{basePath}/api/*` 两种路由模式
+- **智能路径处理**：通用的路径解析逻辑正确处理所有 API 端点
+- **动态 HTML 注入**：后端根据检测到的子路径动态注入 `<base>` 标签
+
+### 🚀 部署示例
+
+```nginx
+# Nginx 反向代理配置
+location /cpa-helper/ {
+    proxy_pass http://localhost:18317/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+```
+
+访问 `https://yourdomain.com/cpa-helper` 即可，开箱即用！🎉
+
+### 📋 技术实现
+
+**前端改动：**
+- Vite 配置：`base: './'` 支持相对路径构建
+- 路由器：自动从 URL 检测 base path
+- API 客户端：相对路径请求（`api/*` 而非 `/api/*`）
+- 资源文件：所有静态资源使用相对路径
+
+**后端改动：**
+- 为所有 API 端点注册双路由模式
+- 通用 `splitPath` 函数处理路径解析
+- 在 HTML 响应中动态注入 `<base>` 标签
+- 使用 `strings.Index` 智能提取路径
 
 ---
 

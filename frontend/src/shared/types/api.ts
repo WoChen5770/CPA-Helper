@@ -37,7 +37,6 @@ export interface SettingsResponse {
   batch_size: number
   poll_interval_seconds: number
   retry_interval_seconds: number
-  base_path: string
   cpamc_url: string
 }
 
@@ -50,7 +49,6 @@ export interface SettingsUpdatePayload {
   batch_size?: number
   poll_interval_seconds?: number
   retry_interval_seconds?: number
-  base_path?: string
   cpamc_url?: string
 }
 
