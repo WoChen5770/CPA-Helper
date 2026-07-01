@@ -625,3 +625,84 @@ export interface ApiKeyCreatePayload {
 export interface ApiKeyUpdatePayload {
   description: string
 }
+
+// Model Checker types
+export interface ModelCheckerConfig {
+  schedule_cron: string
+  timeout_seconds: number
+  max_retries: number
+  enabled: boolean
+  auto_start_daemon: boolean
+}
+
+export interface ModelCheckerStatus {
+  running: boolean
+  running_modes: string[]
+  daemon_running: boolean
+  state: string
+  detail: string
+  mode: string | null
+  last_started_at: string | null
+  last_finished_at: string | null
+  stats: ModelCheckStats
+  logs: string[]
+}
+
+export interface ModelCheckStats {
+  total_models: number
+  available_models: number
+  unavailable_models: number
+  newly_available: number
+  newly_unavailable: number
+  error_models: number
+}
+
+export interface TrackedModel {
+  model_id: string
+  provider: string
+  enabled: boolean
+  check_interval_minutes: number
+  timeout_seconds: number
+  max_retries: number
+  alert_on_unavailable: boolean
+  last_status: string
+  last_available_keys: string[]
+  last_checked_at: string | null
+  last_available_at: string | null
+  first_seen_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ModelCheckRun {
+  id: number
+  mode: string
+  state: string
+  detail: string | null
+  started_at: string | null
+  finished_at: string | null
+  total_models: number
+  available_models: number
+  unavailable_models: number
+  newly_available: number
+  newly_unavailable: number
+  error_models: number
+  created_at: string
+  updated_at: string
+  models?: ModelCheckRunModel[]
+}
+
+export interface ModelCheckRunModel {
+  id: number
+  run_id: number
+  model_id: string
+  provider: string
+  status: string
+  available_keys: string[] | null
+  error_message: string | null
+  change_type: string
+  checked_at: string | null
+  created_at: string
+}
+
+}

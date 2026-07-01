@@ -55,6 +55,7 @@ type App struct {
 	collector        *CollectorRunner
 	keeper           *KeeperRunner
 	keeperUsageCache keeperWindowUsageCache
+	modelCheckRunner *ModelCheckRunner
 }
 
 type AppError struct {
@@ -151,6 +152,7 @@ func NewWithOptions(ctx context.Context, options NewOptions) (*App, error) {
 func (a *App) startBackground(ctx context.Context) {
 	a.collector = NewCollectorRunner(a)
 	a.keeper = NewKeeperRunner(a)
+	a.modelCheckRunner = newModelCheckRunner(a)
 	a.collector.Start()
 	a.keeper.LoadPersistedState(ctx)
 	a.keeper.StartAutoIfConfigured()
@@ -162,6 +164,9 @@ func (a *App) Close() {
 	}
 	if a.keeper != nil {
 		a.keeper.Stop()
+	}
+	if a.modelCheckRunner != nil {
+		a.modelCheckRunner.Stop()
 	}
 	if a.db != nil {
 		a.db.Close()
@@ -316,6 +321,9 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("/api/codex-keeper/", a.wrap(a.handleCodexKeeper))
 	mux.HandleFunc("/{basePath}/api/codex-keeper/", a.wrap(a.handleCodexKeeper))
 
+	mux.HandleFunc("/api/model-checker/", a.wrap(a.handleModelChecker))
+	mux.HandleFunc("/{basePath}/api/model-checker/", a.wrap(a.handleModelChecker))
+
 	// SPA 和静态资源 - 捕获所有其他请求
 	mux.HandleFunc("/", a.wrap(a.handleSPA))
 	return withCORS(mux)
@@ -447,8 +455,9 @@ func (a *App) handleSPA(w http.ResponseWriter, r *http.Request) error {
 
 // extractBasePath 从请求路径中提取 base path
 // 例如：/cpa-helper/login -> (/cpa-helper, /login)
-//      /login -> ("", /login)
-//      /some-path/admin/usage -> (/some-path, /admin/usage)
+//
+//	/login -> ("", /login)
+//	/some-path/admin/usage -> (/some-path, /admin/usage)
 func extractBasePath(fullPath string) (basePath string, requestPath string) {
 	// 已知的应用路由（这些不是 base path）
 	knownRoutes := []string{"/login", "/change-credentials", "/admin", "/account", "/usage", "/records", "/keys", "/pricing", "/settings", "/users"}
