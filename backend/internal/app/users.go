@@ -304,7 +304,14 @@ func (a *App) handleCurrentUserAPIKeyByHash(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		return err
 	}
-	apiKeyHash := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/api-keys/"), "/")
+	// 移除路径中的 base path 和 /api/api-keys/ 前缀
+	// 例如：/cpa-helper/api/api-keys/abc123 -> abc123
+	//      /api/api-keys/abc123 -> abc123
+	urlPath := r.URL.Path
+	if idx := strings.Index(urlPath, "/api/api-keys/"); idx >= 0 {
+		urlPath = urlPath[idx+len("/api/api-keys/"):]
+	}
+	apiKeyHash := strings.Trim(urlPath, "/")
 	if apiKeyHash == "" {
 		return notFoundError("API KEY 不存在")
 	}

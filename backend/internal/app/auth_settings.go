@@ -40,7 +40,14 @@ const (
 const apiKeySyncMissingConfigMessage = "CPA 配置未完成：请先到「系统设置」填写 CLIProxyAPI 地址和管理密钥，再返回 API 密钥页操作。"
 
 func (a *App) handleAuth(w http.ResponseWriter, r *http.Request) error {
-	path := strings.TrimPrefix(r.URL.Path, "/api/auth")
+	// 移除路径中的 base path 和 /api/auth 前缀
+	// 例如：/cpa-helper/api/auth/setup -> /setup
+	//      /api/auth/setup -> /setup
+	path := r.URL.Path
+	if idx := strings.Index(path, "/api/auth"); idx >= 0 {
+		path = strings.TrimPrefix(path[idx:], "/api/auth")
+	}
+
 	switch path {
 	case "/login":
 		if err := requireMethod(r, http.MethodPost); err != nil {

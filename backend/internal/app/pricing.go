@@ -113,7 +113,14 @@ func (a *App) handleModelPrices(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) handleModelPriceByPath(w http.ResponseWriter, r *http.Request) error {
-	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/model-prices/"), "/")
+	// 移除路径中的 base path 和 /api/model-prices/ 前缀
+	// 例如：/cpa-helper/api/model-prices/sync/litellm -> sync/litellm
+	//      /api/model-prices/sync/litellm -> sync/litellm
+	urlPath := r.URL.Path
+	if idx := strings.Index(urlPath, "/api/model-prices/"); idx >= 0 {
+		urlPath = urlPath[idx+len("/api/model-prices/"):]
+	}
+	path := strings.Trim(urlPath, "/")
 	if path == "sync/litellm" {
 		if _, err := a.adminUser(r.Context(), r); err != nil {
 			return err
