@@ -39,6 +39,7 @@ const settingsForm = reactive({
   batch_size: 100,
   poll_interval_seconds: 2,
   retry_interval_seconds: 10,
+  base_path: '',
 })
 
 const remoteStatusType = computed(() => {
@@ -78,6 +79,8 @@ async function refresh() {
     settingsForm.batch_size = settings.batch_size
     settingsForm.poll_interval_seconds = settings.poll_interval_seconds
     settingsForm.retry_interval_seconds = settings.retry_interval_seconds
+    settingsForm.base_path = settings.base_path
+    settingsForm.retry_interval_seconds = settings.retry_interval_seconds
     collectorStatus.value = status
   } catch (error) {
     message.error(errorText(error, '加载设置失败', 'Failed to load settings'))
@@ -97,6 +100,7 @@ async function saveSettings() {
       batch_size: settingsForm.batch_size,
       poll_interval_seconds: settingsForm.poll_interval_seconds,
       retry_interval_seconds: settingsForm.retry_interval_seconds,
+      base_path: settingsForm.base_path,
     }
     const saved = await updateSettings(payload)
     settingsForm.management_key = saved.management_key
@@ -199,6 +203,14 @@ onMounted(refresh)
               <NFormItem :label="t('重试间隔（秒）', 'Retry interval (seconds)')">
                 <NInputNumber v-model:value="settingsForm.retry_interval_seconds" :min="1" />
               </NFormItem>
+              <div class="field-stack">
+                <div class="field-label">{{ t('根路径（可选）', 'Base path (optional)') }}</div>
+                <NInput
+                  v-model:value="settingsForm.base_path"
+                  :placeholder="t('例如：my-app（用于nginx反代）', 'Example: my-app (for nginx reverse proxy)')"
+                />
+                <div class="form-help">{{ t('设置后访问路径为 http://domain.com/根路径/', 'After setting, the access path will be http://domain.com/base-path/') }}</div>
+              </div>
             </div>
           </NForm>
         </div>

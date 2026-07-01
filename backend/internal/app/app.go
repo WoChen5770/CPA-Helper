@@ -229,12 +229,18 @@ func frontendDistDir(repoRoot string) (string, bool) {
 }
 
 func (a *App) Routes() http.Handler {
+	cfg, _ := a.loadConfig(context.Background())
+	basePath := ""
+	if cfg.BasePath != "" {
+		basePath = "/" + cfg.BasePath
+	}
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/health", a.wrap(func(w http.ResponseWriter, r *http.Request) error {
+	mux.HandleFunc("GET "+basePath+"/api/health", a.wrap(func(w http.ResponseWriter, r *http.Request) error {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return nil
 	}))
-	mux.HandleFunc("GET /api/ready", a.wrap(func(w http.ResponseWriter, r *http.Request) error {
+	mux.HandleFunc("GET "+basePath+"/api/ready", a.wrap(func(w http.ResponseWriter, r *http.Request) error {
 		report, err := a.Readiness(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
@@ -254,24 +260,24 @@ func (a *App) Routes() http.Handler {
 		return nil
 	}))
 
-	mux.HandleFunc("/api/auth/", a.wrap(a.handleAuth))
-	mux.HandleFunc("/api/settings", a.wrap(a.handleSettings))
-	mux.HandleFunc("/api/collector/status", a.wrap(a.handleCollectorStatus))
-	mux.HandleFunc("/api/usage/", a.wrap(a.handleUsage))
-	mux.HandleFunc("/api/model-prices", a.wrap(a.handleModelPrices))
-	mux.HandleFunc("/api/model-prices/", a.wrap(a.handleModelPriceByPath))
-	mux.HandleFunc("/api/users", a.wrap(a.handleUsers))
-	mux.HandleFunc("/api/users/", a.wrap(a.handleUserByPath))
-	mux.HandleFunc("/api/account/quota", a.wrap(a.handleCurrentUserQuota))
-	mux.HandleFunc("/api/api-keys", a.wrap(a.handleCurrentUserAPIKeys))
-	mux.HandleFunc("/api/api-keys/", a.wrap(a.handleCurrentUserAPIKeyByHash))
-	mux.HandleFunc("/api/account/models", a.wrap(a.handleAvailableModels))
-	mux.HandleFunc("/api/account/model-request/test", a.wrap(a.handleCurrentModelRequestTest))
-	mux.HandleFunc("/api/account/model-request", a.wrap(a.handleCurrentModelRequestGuide))
-	mux.HandleFunc("/api/card-shops/favorites", a.wrap(a.handleCardShopFavorites))
-	mux.HandleFunc("/api/card-shops/tags", a.wrap(a.handleCardShopTags))
-	mux.HandleFunc("/api/card-shops", a.wrap(a.handleCardShops))
-	mux.HandleFunc("/api/codex-keeper/", a.wrap(a.handleCodexKeeper))
+	mux.HandleFunc(basePath+"/api/auth/", a.wrap(a.handleAuth))
+	mux.HandleFunc(basePath+"/api/settings", a.wrap(a.handleSettings))
+	mux.HandleFunc(basePath+"/api/collector/status", a.wrap(a.handleCollectorStatus))
+	mux.HandleFunc(basePath+"/api/usage/", a.wrap(a.handleUsage))
+	mux.HandleFunc(basePath+"/api/model-prices", a.wrap(a.handleModelPrices))
+	mux.HandleFunc(basePath+"/api/model-prices/", a.wrap(a.handleModelPriceByPath))
+	mux.HandleFunc(basePath+"/api/users", a.wrap(a.handleUsers))
+	mux.HandleFunc(basePath+"/api/users/", a.wrap(a.handleUserByPath))
+	mux.HandleFunc(basePath+"/api/account/quota", a.wrap(a.handleCurrentUserQuota))
+	mux.HandleFunc(basePath+"/api/api-keys", a.wrap(a.handleCurrentUserAPIKeys))
+	mux.HandleFunc(basePath+"/api/api-keys/", a.wrap(a.handleCurrentUserAPIKeyByHash))
+	mux.HandleFunc(basePath+"/api/account/models", a.wrap(a.handleAvailableModels))
+	mux.HandleFunc(basePath+"/api/account/model-request/test", a.wrap(a.handleCurrentModelRequestTest))
+	mux.HandleFunc(basePath+"/api/account/model-request", a.wrap(a.handleCurrentModelRequestGuide))
+	mux.HandleFunc(basePath+"/api/card-shops/favorites", a.wrap(a.handleCardShopFavorites))
+	mux.HandleFunc(basePath+"/api/card-shops/tags", a.wrap(a.handleCardShopTags))
+	mux.HandleFunc(basePath+"/api/card-shops", a.wrap(a.handleCardShops))
+	mux.HandleFunc(basePath+"/api/codex-keeper/", a.wrap(a.handleCodexKeeper))
 	mux.HandleFunc("/", a.wrap(a.handleSPA))
 	return withCORS(mux)
 }
@@ -363,23 +369,45 @@ func requireMethod(r *http.Request, methods ...string) error {
 }
 
 func (a *App) handleSPA(w http.ResponseWriter, r *http.Request) error {
-	if strings.HasPrefix(r.URL.Path, "/api/") {
+	cfg, _ := a.loadConfig(r.Context())
+	basePath := ""
+	if cfg.BasePath != "" {
+		basePath = "/" + cfg.BasePath
+	}
+
+	// 检查是否是 API 路径
+	if strings.HasPrefix(r.URL.Path, basePath+"/api/") {
 		return notFoundError("Not Found")
 	}
+
+	// 如果设置了 basePath，需要处理路径重写
+	requestPath := r.URL.Path
+	if basePath != "" && strings.HasPrefix(requestPath, basePath+"/") {
+		// 去掉 basePath 前缀，用于文件查找
+		requestPath = strings.TrimPrefix(requestPath, basePath)
+	} else if basePath != "" && requestPath == basePath {
+		// 访问 basePath 本身，重定向到 basePath/
+		http.Redirect(w, r, basePath+"/", http.StatusMovedPermanently)
+		return nil
+	} else if basePath != "" {
+		// 访问其他路径但设置了 basePath，返回 404
+		return notFoundError("Not Found")
+	}
+
 	if a.frontendEnv {
-		served, err := a.serveExternalSPA(w, r)
+		served, err := a.serveExternalSPAWithPath(w, r, requestPath)
 		if err != nil || served {
 			return err
 		}
 		return a.serveFrontendNotBuilt(w)
 	}
 	if a.frontendFS != nil {
-		served, err := a.serveEmbeddedSPA(w, r)
+		served, err := a.serveEmbeddedSPAWithPath(w, r, requestPath)
 		if err != nil || served {
 			return err
 		}
 	}
-	served, err := a.serveExternalSPA(w, r)
+	served, err := a.serveExternalSPAWithPath(w, r, requestPath)
 	if err != nil || served {
 		return err
 	}
@@ -387,7 +415,11 @@ func (a *App) handleSPA(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) serveExternalSPA(w http.ResponseWriter, r *http.Request) (bool, error) {
-	requested := cleanSPAPath(r.URL.Path)
+	return a.serveExternalSPAWithPath(w, r, r.URL.Path)
+}
+
+func (a *App) serveExternalSPAWithPath(w http.ResponseWriter, r *http.Request, requestPath string) (bool, error) {
+	requested := cleanSPAPath(requestPath)
 	if requested != "" {
 		staticPath := filepath.Join(a.frontendDist, filepath.FromSlash(requested))
 		if insideDir(a.frontendDist, staticPath) {
@@ -406,7 +438,11 @@ func (a *App) serveExternalSPA(w http.ResponseWriter, r *http.Request) (bool, er
 }
 
 func (a *App) serveEmbeddedSPA(w http.ResponseWriter, r *http.Request) (bool, error) {
-	requested := cleanSPAPath(r.URL.Path)
+	return a.serveEmbeddedSPAWithPath(w, r, r.URL.Path)
+}
+
+func (a *App) serveEmbeddedSPAWithPath(w http.ResponseWriter, r *http.Request, requestPath string) (bool, error) {
+	requested := cleanSPAPath(requestPath)
 	if requested != "" && fs.ValidPath(requested) {
 		if info, err := fs.Stat(a.frontendFS, requested); err == nil && !info.IsDir() {
 			return true, serveFSFile(w, r, a.frontendFS, requested)
@@ -493,6 +529,7 @@ type AppConfig struct {
 	LiteLLMProxy            LiteLLMProxyConfig `json:"litellm_proxy"`
 	ModelRequestURL         string             `json:"model_request_url"`
 	SessionSecret           string             `json:"session_secret"`
+	BasePath                string             `json:"base_path"`
 }
 
 func defaultConfig() (AppConfig, error) {
@@ -530,6 +567,7 @@ func defaultConfig() (AppConfig, error) {
 		},
 		ModelRequestURL: defaultCPAURL,
 		SessionSecret:   secret,
+		BasePath:        "",
 	}, nil
 }
 
@@ -548,14 +586,14 @@ func (a *App) loadConfig(ctx context.Context) (AppConfig, error) {
 		SELECT collector_enabled, cliaproxy_url, management_key, queue_name, batch_size,
 		       poll_interval_seconds, retry_interval_seconds, codex_keeper_settings,
 		       codex_keeper_priority_rules, litellm_proxy_enabled, litellm_proxy_url,
-		       model_request_url, session_secret
+		       model_request_url, session_secret, base_path
 		FROM app_settings WHERE id = 1
 	`)
 	var collectorEnabled, litellmProxyEnabled bool
-	var cliaproxyURL, managementKey, queueName, keeperJSON, rulesJSON, litellmProxyURL, modelRequestURL, sessionSecret string
+	var cliaproxyURL, managementKey, queueName, keeperJSON, rulesJSON, litellmProxyURL, modelRequestURL, sessionSecret, basePath string
 	var batchSize int
 	var pollInterval, retryInterval float64
-	if err := row.Scan(&collectorEnabled, &cliaproxyURL, &managementKey, &queueName, &batchSize, &pollInterval, &retryInterval, &keeperJSON, &rulesJSON, &litellmProxyEnabled, &litellmProxyURL, &modelRequestURL, &sessionSecret); err != nil {
+	if err := row.Scan(&collectorEnabled, &cliaproxyURL, &managementKey, &queueName, &batchSize, &pollInterval, &retryInterval, &keeperJSON, &rulesJSON, &litellmProxyEnabled, &litellmProxyURL, &modelRequestURL, &sessionSecret, &basePath); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return AppConfig{}, fmt.Errorf("%w: app_settings id=1 is missing; run `cpa-helper migrate`", ErrAppSettingsMissing)
 		}
@@ -592,6 +630,7 @@ func (a *App) loadConfig(ctx context.Context) (AppConfig, error) {
 		ProxyURL: strings.TrimSpace(litellmProxyURL),
 	}
 	cfg.ModelRequestURL = nonBlank(strings.TrimRight(strings.TrimSpace(modelRequestURL), "/"), cfg.Collector.CLIProxyURL)
+	cfg.BasePath = strings.Trim(strings.TrimSpace(basePath), "/")
 	return cfg, nil
 }
 
@@ -646,9 +685,9 @@ func (a *App) saveConfig(ctx context.Context, cfg AppConfig) error {
 		    batch_size = ?, poll_interval_seconds = ?, retry_interval_seconds = ?,
 		    codex_keeper_settings = ?, codex_keeper_priority_rules = ?,
 		    litellm_proxy_enabled = ?, litellm_proxy_url = ?,
-		    model_request_url = ?, session_secret = ?, updated_at = ?
+		    model_request_url = ?, session_secret = ?, base_path = ?, updated_at = ?
 		WHERE id = 1
-	`, cfg.Collector.Enabled, strings.TrimRight(strings.TrimSpace(cfg.Collector.CLIProxyURL), "/"), strings.TrimSpace(cfg.Collector.ManagementKey), strings.TrimSpace(cfg.Collector.QueueName), cfg.Collector.BatchSize, cfg.Collector.PollIntervalSeconds, cfg.Collector.RetryIntervalSeconds, string(keeperBytes), string(rulesBytes), cfg.LiteLLMProxy.Enabled, strings.TrimSpace(cfg.LiteLLMProxy.ProxyURL), strings.TrimRight(strings.TrimSpace(cfg.ModelRequestURL), "/"), cfg.SessionSecret, dbTime(time.Now()))
+	`, cfg.Collector.Enabled, strings.TrimRight(strings.TrimSpace(cfg.Collector.CLIProxyURL), "/"), strings.TrimSpace(cfg.Collector.ManagementKey), strings.TrimSpace(cfg.Collector.QueueName), cfg.Collector.BatchSize, cfg.Collector.PollIntervalSeconds, cfg.Collector.RetryIntervalSeconds, string(keeperBytes), string(rulesBytes), cfg.LiteLLMProxy.Enabled, strings.TrimSpace(cfg.LiteLLMProxy.ProxyURL), strings.TrimRight(strings.TrimSpace(cfg.ModelRequestURL), "/"), cfg.SessionSecret, strings.Trim(strings.TrimSpace(cfg.BasePath), "/"), dbTime(time.Now()))
 	return err
 }
 
