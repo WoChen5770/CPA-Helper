@@ -193,7 +193,7 @@ func (a *App) handleUserByPath(w http.ResponseWriter, r *http.Request) error {
 			writeJSON(w, http.StatusOK, user)
 			return nil
 		case http.MethodDelete:
-			if err := a.disableUser(r.Context(), userID); err != nil {
+			if err := a.deleteUser(r.Context(), userID); err != nil {
 				return err
 			}
 			writeNoContent(w)
@@ -445,6 +445,27 @@ func (a *App) updateUser(ctx context.Context, id int, payload userPayload) (User
 		}
 	}
 	return UserSummaryResponse{}, notFoundError("用户不存在")
+}
+
+func (a *App) deleteUser(ctx context.Context, id int) error {
+	user, err := a.getUser(ctx, id)
+	if err != nil {
+		return err
+	}
+	if user.ID == 1 {
+		return conflictError("第一个用户不能删除")
+	}
+	if user.DisabledAt == nil {
+		return conflictError("只能删除已禁用的用户")
+	}
+	// 删除该用户的所有 API keys
+	_, err = a.db.ExecContext(ctx, `DELETE FROM user_api_keys WHERE user_id = ?`, id)
+	if err != nil {
+		return err
+	}
+	// 删除用户
+	_, err = a.db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
+	return err
 }
 
 func (a *App) disableUser(ctx context.Context, id int) error {

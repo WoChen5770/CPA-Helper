@@ -21,6 +21,7 @@ import { CircleDollarSign, KeyRound, ShieldCheck, UserRound } from 'lucide-vue-n
 
 import {
   createUser,
+  deleteUser,
   disableUser,
   enableUser,
   listUsers,
@@ -234,6 +235,16 @@ async function enableUserRow(row: UserSummary) {
   }
 }
 
+async function deleteUserRow(row: UserSummary) {
+  try {
+    await deleteUser(row.id)
+    message.success(t('用户已删除', 'User deleted'))
+    await refresh()
+  } catch (error) {
+    message.error(errorText(error, '删除用户失败', 'Failed to delete user'))
+  }
+}
+
 async function saveUser() {
   const nickname = userNickname.value.trim()
   if (!nickname) {
@@ -429,16 +440,37 @@ const columns = computed<DataTableColumns<UserSummary>>(() => [
               ? null
               : isUserDisabled(row)
                 ? h(
-                    NPopconfirm,
-                    { onPositiveClick: () => enableUserRow(row) },
+                    NSpace,
+                    { size: 4 },
                     {
-                      trigger: () =>
+                      default: () => [
                         h(
-                          NButton,
-                          { size: 'small', quaternary: true, type: 'primary' },
-                          { default: () => t('启用', 'Enable') },
+                          NPopconfirm,
+                          { onPositiveClick: () => enableUserRow(row) },
+                          {
+                            trigger: () =>
+                              h(
+                                NButton,
+                                { size: 'small', quaternary: true, type: 'primary' },
+                                { default: () => t('启用', 'Enable') },
+                              ),
+                            default: () => t(`启用用户 ${userLabel(row)} 并恢复其 API KEY？`, `Enable user ${userLabel(row)} and restore their API keys?`),
+                          },
                         ),
-                      default: () => t(`启用用户 ${userLabel(row)} 并恢复其 API KEY？`, `Enable user ${userLabel(row)} and restore their API keys?`),
+                        h(
+                          NPopconfirm,
+                          { onPositiveClick: () => deleteUserRow(row) },
+                          {
+                            trigger: () =>
+                              h(
+                                NButton,
+                                { size: 'small', quaternary: true, type: 'error' },
+                                { default: () => t('删除', 'Delete') },
+                              ),
+                            default: () => t(`确定删除用户 ${userLabel(row)}？删除后无法恢复。`, `Delete user ${userLabel(row)}? This cannot be undone.`),
+                          },
+                        ),
+                      ],
                     },
                   )
                 : h(
