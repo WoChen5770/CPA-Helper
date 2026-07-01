@@ -628,11 +628,9 @@ export interface ApiKeyUpdatePayload {
 
 // Model Checker types
 export interface ModelCheckerConfig {
-  schedule_cron: string
   timeout_seconds: number
   max_retries: number
-  enabled: boolean
-  auto_start_daemon: boolean
+  alert_on_unavailable: boolean
 }
 
 export interface ModelCheckerStatus {
@@ -661,11 +659,8 @@ export interface TrackedModel {
   model_id: string
   provider: string
   enabled: boolean
-  check_interval_minutes: number
-  timeout_seconds: number
-  max_retries: number
-  alert_on_unavailable: boolean
-  last_status: string
+  schedule_cron: string
+  last_status: string | null
   last_available_keys: string[]
   last_checked_at: string | null
   last_available_at: string | null

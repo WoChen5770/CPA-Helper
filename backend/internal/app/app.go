@@ -166,7 +166,10 @@ func (a *App) Close() {
 		a.keeper.Stop()
 	}
 	if a.modelCheckRunner != nil {
-		a.modelCheckRunner.Stop()
+		// Stop all cron schedules
+		if a.modelCheckRunner.cron != nil {
+			a.modelCheckRunner.cron.Stop()
+		}
 	}
 	if a.db != nil {
 		a.db.Close()

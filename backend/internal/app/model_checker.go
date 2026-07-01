@@ -28,8 +28,6 @@ const (
 type ModelCheckRunner struct {
 	app            *App
 	mu             sync.Mutex
-	daemonStop     chan struct{}
-	daemonDone     chan struct{}
 	running        bool
 	runningModes   map[string]struct{}
 	state          string
@@ -40,6 +38,7 @@ type ModelCheckRunner struct {
 	stats          modelCheckStats
 	logs           []string
 	cron           *cron.Cron
+	cronEntries    map[string]cron.EntryID // modelID -> cron entry ID
 }
 
 type modelCheckStats struct {
@@ -65,53 +64,40 @@ type modelCheckStatusResponse struct {
 }
 
 type ModelCheckerConfig struct {
-	ScheduleCron    string `json:"schedule_cron"`
-	TimeoutSeconds  int    `json:"timeout_seconds"`
-	MaxRetries      int    `json:"max_retries"`
-	Enabled         bool   `json:"enabled"`
-	AutoStartDaemon bool   `json:"auto_start_daemon"`
+	TimeoutSeconds     int  `json:"timeout_seconds"`
+	MaxRetries         int  `json:"max_retries"`
+	AlertOnUnavailable bool `json:"alert_on_unavailable"`
 }
 
 type modelCheckerSettingsUpdateRequest struct {
-	ScheduleCron    *string `json:"schedule_cron"`
-	TimeoutSeconds  *int    `json:"timeout_seconds"`
-	MaxRetries      *int    `json:"max_retries"`
-	Enabled         *bool   `json:"enabled"`
-	AutoStartDaemon *bool   `json:"auto_start_daemon"`
+	TimeoutSeconds     *int  `json:"timeout_seconds"`
+	MaxRetries         *int  `json:"max_retries"`
+	AlertOnUnavailable *bool `json:"alert_on_unavailable"`
 }
 
 type trackedModel struct {
-	ModelID              string   `json:"model_id"`
-	Provider             string   `json:"provider"`
-	Enabled              bool     `json:"enabled"`
-	CheckIntervalMinutes int      `json:"check_interval_minutes"`
-	TimeoutSeconds       int      `json:"timeout_seconds"`
-	MaxRetries           int      `json:"max_retries"`
-	AlertOnUnavailable   bool     `json:"alert_on_unavailable"`
-	LastStatus           string   `json:"last_status"`
-	LastAvailableKeys    []string `json:"last_available_keys"`
-	LastCheckedAt        *string  `json:"last_checked_at"`
-	LastAvailableAt      *string  `json:"last_available_at"`
-	FirstSeenAt          *string  `json:"first_seen_at"`
-	CreatedAt            string   `json:"created_at"`
-	UpdatedAt            string   `json:"updated_at"`
+	ModelID           string   `json:"model_id"`
+	Provider          string   `json:"provider"`
+	Enabled           bool     `json:"enabled"`
+	ScheduleCron      string   `json:"schedule_cron"`
+	LastStatus        *string  `json:"last_status"`
+	LastAvailableKeys []string `json:"last_available_keys"`
+	LastCheckedAt     *string  `json:"last_checked_at"`
+	LastAvailableAt   *string  `json:"last_available_at"`
+	FirstSeenAt       *string  `json:"first_seen_at"`
+	CreatedAt         string   `json:"created_at"`
+	UpdatedAt         string   `json:"updated_at"`
 }
 
 type addTrackedModelRequest struct {
-	ModelID              string `json:"model_id"`
-	Provider             string `json:"provider"`
-	CheckIntervalMinutes *int   `json:"check_interval_minutes"`
-	TimeoutSeconds       *int   `json:"timeout_seconds"`
-	MaxRetries           *int   `json:"max_retries"`
-	AlertOnUnavailable   *bool  `json:"alert_on_unavailable"`
+	ModelID      string  `json:"model_id"`
+	Provider     string  `json:"provider"`
+	ScheduleCron *string `json:"schedule_cron"`
 }
 
 type updateTrackedModelRequest struct {
-	Enabled              *bool `json:"enabled"`
-	CheckIntervalMinutes *int  `json:"check_interval_minutes"`
-	TimeoutSeconds       *int  `json:"timeout_seconds"`
-	MaxRetries           *int  `json:"max_retries"`
-	AlertOnUnavailable   *bool `json:"alert_on_unavailable"`
+	Enabled      *bool   `json:"enabled"`
+	ScheduleCron *string `json:"schedule_cron"`
 }
 
 type checkModelResult struct {
@@ -127,8 +113,10 @@ func newModelCheckRunner(app *App) *ModelCheckRunner {
 	return &ModelCheckRunner{
 		app:          app,
 		runningModes: make(map[string]struct{}),
+		cronEntries:  make(map[string]cron.EntryID),
 		state:        "idle",
 		logs:         make([]string, 0, modelCheckerMaxInMemoryLogs),
+		cron:         cron.New(cron.WithLocation(appTimeLocation)),
 	}
 }
 
@@ -156,7 +144,7 @@ func (r *ModelCheckRunner) Status() modelCheckStatusResponse {
 	return modelCheckStatusResponse{
 		Running:        r.running,
 		RunningModes:   modes,
-		DaemonRunning:  r.daemonStop != nil,
+		DaemonRunning:  r.cron != nil && len(r.cron.Entries()) > 0,
 		State:          r.state,
 		Detail:         r.detail,
 		Mode:           r.mode,
@@ -226,9 +214,6 @@ func (a *App) loadModelCheckerConfig(ctx context.Context) (ModelCheckerConfig, e
 	}
 
 	// Set defaults
-	if cfg.ScheduleCron == "" {
-		cfg.ScheduleCron = "0 */6 * * *"
-	}
 	if cfg.TimeoutSeconds == 0 {
 		cfg.TimeoutSeconds = 30
 	}
@@ -284,29 +269,6 @@ func (a *App) handleModelChecker(w http.ResponseWriter, r *http.Request) error {
 		}
 		writeJSON(w, http.StatusOK, a.modelCheckRunner.Status())
 		return nil
-	case len(parts) == 1 && parts[0] == "run-once":
-		if err := requireMethod(r, http.MethodPost); err != nil {
-			return err
-		}
-		go a.modelCheckRunner.RunOnce()
-		writeJSON(w, http.StatusOK, map[string]string{"message": "检查已启动"})
-		return nil
-	case len(parts) == 1 && parts[0] == "start":
-		if err := requireMethod(r, http.MethodPost); err != nil {
-			return err
-		}
-		if err := a.modelCheckRunner.StartDaemon(); err != nil {
-			return err
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"message": "Daemon 已启动"})
-		return nil
-	case len(parts) == 1 && parts[0] == "stop":
-		if err := requireMethod(r, http.MethodPost); err != nil {
-			return err
-		}
-		a.modelCheckRunner.Stop()
-		writeJSON(w, http.StatusOK, map[string]string{"message": "Daemon 已停止"})
-		return nil
 	case len(parts) == 2 && parts[0] == "logs" && parts[1] == "clear":
 		if err := requireMethod(r, http.MethodPost); err != nil {
 			return err
@@ -324,11 +286,17 @@ func (a *App) handleModelChecker(w http.ResponseWriter, r *http.Request) error {
 		return methodNotAllowed()
 	case len(parts) >= 2 && parts[0] == "models":
 		modelID := strings.Join(parts[1:], "/")
-		if strings.HasSuffix(modelID, "/check") {
+		if strings.HasSuffix(modelID, "/start") {
 			if err := requireMethod(r, http.MethodPost); err != nil {
 				return err
 			}
-			return a.checkTrackedModelNow(w, r, strings.TrimSuffix(modelID, "/check"))
+			return a.startModelSchedule(w, r, strings.TrimSuffix(modelID, "/start"))
+		}
+		if strings.HasSuffix(modelID, "/stop") {
+			if err := requireMethod(r, http.MethodPost); err != nil {
+				return err
+			}
+			return a.stopModelSchedule(w, r, strings.TrimSuffix(modelID, "/stop"))
 		}
 		if r.Method == http.MethodGet {
 			return a.getTrackedModel(w, r, modelID)
@@ -355,13 +323,6 @@ func (a *App) updateModelCheckerSettings(w http.ResponseWriter, r *http.Request)
 		return err
 	}
 
-	if payload.ScheduleCron != nil {
-		_, normalized, err := nextRunTimes(*payload.ScheduleCron, 5, time.Now())
-		if err != nil {
-			return err
-		}
-		cfg.ScheduleCron = normalized
-	}
 	if payload.TimeoutSeconds != nil {
 		if *payload.TimeoutSeconds < 1 {
 			return validationError("timeout_seconds 不能小于 1")
@@ -374,11 +335,8 @@ func (a *App) updateModelCheckerSettings(w http.ResponseWriter, r *http.Request)
 		}
 		cfg.MaxRetries = *payload.MaxRetries
 	}
-	if payload.Enabled != nil {
-		cfg.Enabled = *payload.Enabled
-	}
-	if payload.AutoStartDaemon != nil {
-		cfg.AutoStartDaemon = *payload.AutoStartDaemon
+	if payload.AlertOnUnavailable != nil {
+		cfg.AlertOnUnavailable = *payload.AlertOnUnavailable
 	}
 
 	if err := a.saveModelCheckerConfig(r.Context(), cfg); err != nil {
@@ -391,8 +349,7 @@ func (a *App) updateModelCheckerSettings(w http.ResponseWriter, r *http.Request)
 
 func (a *App) getTrackedModels(w http.ResponseWriter, r *http.Request) error {
 	rows, err := a.db.QueryContext(r.Context(), `
-		SELECT model_id, provider, enabled, check_interval_minutes, timeout_seconds,
-		       max_retries, alert_on_unavailable, last_status, last_available_keys,
+		SELECT model_id, provider, enabled, schedule_cron, last_status, last_available_keys,
 		       last_checked_at, last_available_at, first_seen_at, created_at, updated_at
 		FROM model_checker_tracked_models
 		ORDER BY model_id
@@ -406,17 +363,19 @@ func (a *App) getTrackedModels(w http.ResponseWriter, r *http.Request) error {
 	for rows.Next() {
 		var m trackedModel
 		var keysJSON sql.NullString
-		var enabledInt, alertInt int
+		var lastStatus sql.NullString
+		var enabledInt int
 		if err := rows.Scan(
-			&m.ModelID, &m.Provider, &enabledInt, &m.CheckIntervalMinutes,
-			&m.TimeoutSeconds, &m.MaxRetries, &alertInt, &m.LastStatus,
-			&keysJSON, &m.LastCheckedAt, &m.LastAvailableAt, &m.FirstSeenAt,
-			&m.CreatedAt, &m.UpdatedAt,
+			&m.ModelID, &m.Provider, &enabledInt, &m.ScheduleCron,
+			&lastStatus, &keysJSON, &m.LastCheckedAt, &m.LastAvailableAt,
+			&m.FirstSeenAt, &m.CreatedAt, &m.UpdatedAt,
 		); err != nil {
 			return err
 		}
 		m.Enabled = enabledInt == 1
-		m.AlertOnUnavailable = alertInt == 1
+		if lastStatus.Valid {
+			m.LastStatus = &lastStatus.String
+		}
 		if keysJSON.Valid {
 			json.Unmarshal([]byte(keysJSON.String), &m.LastAvailableKeys)
 		}
@@ -441,32 +400,29 @@ func (a *App) addTrackedModel(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// Set defaults
-	checkInterval := 60
-	if payload.CheckIntervalMinutes != nil {
-		checkInterval = *payload.CheckIntervalMinutes
+	scheduleCron := "0 * * * *"
+	if payload.ScheduleCron != nil {
+		scheduleCron = *payload.ScheduleCron
 	}
-	timeout := 30
-	if payload.TimeoutSeconds != nil {
-		timeout = *payload.TimeoutSeconds
-	}
-	maxRetries := 2
-	if payload.MaxRetries != nil {
-		maxRetries = *payload.MaxRetries
-	}
-	alert := 1
-	if payload.AlertOnUnavailable != nil && !*payload.AlertOnUnavailable {
-		alert = 0
+
+	// Validate cron expression
+	if _, err := cron.ParseStandard(scheduleCron); err != nil {
+		return validationError("无效的 cron 表达式: " + err.Error())
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := a.db.ExecContext(r.Context(), `
 		INSERT INTO model_checker_tracked_models
-		(model_id, provider, enabled, check_interval_minutes, timeout_seconds,
-		 max_retries, alert_on_unavailable, first_seen_at, created_at, updated_at)
-		VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
-	`, payload.ModelID, payload.Provider, checkInterval, timeout, maxRetries, alert, now, now, now)
+		(model_id, provider, enabled, schedule_cron, first_seen_at, created_at, updated_at)
+		VALUES (?, ?, 1, ?, ?, ?, ?)
+	`, payload.ModelID, payload.Provider, scheduleCron, now, now, now)
 	if err != nil {
 		return err
+	}
+
+	// Auto-start schedule for this model
+	if err := a.modelCheckRunner.StartModelSchedule(r.Context(), payload.ModelID); err != nil {
+		slog.Warn("Failed to auto-start schedule for new model", "model_id", payload.ModelID, "error", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "模型已添加到监控"})
@@ -476,18 +432,17 @@ func (a *App) addTrackedModel(w http.ResponseWriter, r *http.Request) error {
 func (a *App) getTrackedModel(w http.ResponseWriter, r *http.Request, modelID string) error {
 	var m trackedModel
 	var keysJSON sql.NullString
-	var enabledInt, alertInt int
+	var lastStatus sql.NullString
+	var enabledInt int
 	err := a.db.QueryRowContext(r.Context(), `
-		SELECT model_id, provider, enabled, check_interval_minutes, timeout_seconds,
-		       max_retries, alert_on_unavailable, last_status, last_available_keys,
+		SELECT model_id, provider, enabled, schedule_cron, last_status, last_available_keys,
 		       last_checked_at, last_available_at, first_seen_at, created_at, updated_at
 		FROM model_checker_tracked_models
 		WHERE model_id = ?
 	`, modelID).Scan(
-		&m.ModelID, &m.Provider, &enabledInt, &m.CheckIntervalMinutes,
-		&m.TimeoutSeconds, &m.MaxRetries, &alertInt, &m.LastStatus,
-		&keysJSON, &m.LastCheckedAt, &m.LastAvailableAt, &m.FirstSeenAt,
-		&m.CreatedAt, &m.UpdatedAt,
+		&m.ModelID, &m.Provider, &enabledInt, &m.ScheduleCron,
+		&lastStatus, &keysJSON, &m.LastCheckedAt, &m.LastAvailableAt,
+		&m.FirstSeenAt, &m.CreatedAt, &m.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return notFoundError("模型未找到")
@@ -497,7 +452,9 @@ func (a *App) getTrackedModel(w http.ResponseWriter, r *http.Request, modelID st
 	}
 
 	m.Enabled = enabledInt == 1
-	m.AlertOnUnavailable = alertInt == 1
+	if lastStatus.Valid {
+		m.LastStatus = &lastStatus.String
+	}
 	if keysJSON.Valid {
 		json.Unmarshal([]byte(keysJSON.String), &m.LastAvailableKeys)
 	}
@@ -526,34 +483,13 @@ func (a *App) updateTrackedModel(w http.ResponseWriter, r *http.Request, modelID
 			args = append(args, 0)
 		}
 	}
-	if payload.CheckIntervalMinutes != nil {
-		if *payload.CheckIntervalMinutes < 1 {
-			return validationError("check_interval_minutes 不能小于 1")
+	if payload.ScheduleCron != nil {
+		// Validate cron expression
+		if _, err := cron.ParseStandard(*payload.ScheduleCron); err != nil {
+			return validationError("无效的 cron 表达式: " + err.Error())
 		}
-		updates = append(updates, "check_interval_minutes = ?")
-		args = append(args, *payload.CheckIntervalMinutes)
-	}
-	if payload.TimeoutSeconds != nil {
-		if *payload.TimeoutSeconds < 1 {
-			return validationError("timeout_seconds 不能小于 1")
-		}
-		updates = append(updates, "timeout_seconds = ?")
-		args = append(args, *payload.TimeoutSeconds)
-	}
-	if payload.MaxRetries != nil {
-		if *payload.MaxRetries < 0 || *payload.MaxRetries > 10 {
-			return validationError("max_retries 超出范围")
-		}
-		updates = append(updates, "max_retries = ?")
-		args = append(args, *payload.MaxRetries)
-	}
-	if payload.AlertOnUnavailable != nil {
-		updates = append(updates, "alert_on_unavailable = ?")
-		if *payload.AlertOnUnavailable {
-			args = append(args, 1)
-		} else {
-			args = append(args, 0)
-		}
+		updates = append(updates, "schedule_cron = ?")
+		args = append(args, *payload.ScheduleCron)
 	}
 
 	if len(updates) == 0 {
@@ -570,11 +506,22 @@ func (a *App) updateTrackedModel(w http.ResponseWriter, r *http.Request, modelID
 		return err
 	}
 
+	// If schedule_cron was updated, restart the schedule
+	if payload.ScheduleCron != nil {
+		a.modelCheckRunner.StopModelSchedule(modelID)
+		if err := a.modelCheckRunner.StartModelSchedule(r.Context(), modelID); err != nil {
+			slog.Warn("Failed to restart schedule after update", "model_id", modelID, "error", err)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"message": "配置已更新"})
 	return nil
 }
 
 func (a *App) deleteTrackedModel(w http.ResponseWriter, r *http.Request, modelID string) error {
+	// Stop schedule first
+	a.modelCheckRunner.StopModelSchedule(modelID)
+
 	_, err := a.db.ExecContext(r.Context(), `
 		DELETE FROM model_checker_tracked_models WHERE model_id = ?
 	`, modelID)
@@ -586,34 +533,90 @@ func (a *App) deleteTrackedModel(w http.ResponseWriter, r *http.Request, modelID
 	return nil
 }
 
-func (a *App) checkTrackedModelNow(w http.ResponseWriter, r *http.Request, modelID string) error {
-	go a.modelCheckRunner.CheckSingleModel(modelID)
-	writeJSON(w, http.StatusOK, map[string]string{"message": "检查已启动"})
+func (a *App) startModelSchedule(w http.ResponseWriter, r *http.Request, modelID string) error {
+	if err := a.modelCheckRunner.StartModelSchedule(r.Context(), modelID); err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "调度已启动"})
+	return nil
+}
+
+func (a *App) stopModelSchedule(w http.ResponseWriter, r *http.Request, modelID string) error {
+	a.modelCheckRunner.StopModelSchedule(modelID)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "调度已停止"})
 	return nil
 }
 
 // Core checking logic - RunOnce performs a single check run for all enabled models
-func (r *ModelCheckRunner) RunOnce() {
+
+// StartModelSchedule starts the cron schedule for a specific model
+func (r *ModelCheckRunner) StartModelSchedule(ctx context.Context, modelID string) error {
 	r.mu.Lock()
-	if r.running {
-		r.mu.Unlock()
-		return
+	defer r.mu.Unlock()
+
+	// Check if already scheduled
+	if _, exists := r.cronEntries[modelID]; exists {
+		return fmt.Errorf("模型 %s 的调度已在运行", modelID)
 	}
-	r.running = true
-	mode := "once"
-	r.runningModes[mode] = struct{}{}
-	r.mu.Unlock()
 
-	defer func() {
-		r.mu.Lock()
-		r.running = false
-		delete(r.runningModes, mode)
-		r.mu.Unlock()
-	}()
+	// Load model configuration
+	var model trackedModel
+	var enabledInt int
+	err := r.app.db.QueryRowContext(ctx, `
+		SELECT model_id, provider, enabled, schedule_cron
+		FROM model_checker_tracked_models
+		WHERE model_id = ?
+	`, modelID).Scan(&model.ModelID, &model.Provider, &enabledInt, &model.ScheduleCron)
+	if err != nil {
+		return fmt.Errorf("加载模型配置失败: %w", err)
+	}
+	model.Enabled = enabledInt == 1
 
-	r.runModelCheck(mode)
+	if !model.Enabled {
+		return fmt.Errorf("模型 %s 未启用", modelID)
+	}
+
+	// Add cron job
+	entryID, err := r.cron.AddFunc(model.ScheduleCron, func() {
+		r.CheckSingleModel(modelID)
+	})
+	if err != nil {
+		return fmt.Errorf("添加 Cron 任务失败: %w", err)
+	}
+
+	r.cronEntries[modelID] = entryID
+
+	// Start cron if not already running
+	if len(r.cronEntries) == 1 {
+		r.cron.Start()
+	}
+
+	r.logf("模型 %s 的调度已启动 (Cron: %s)", modelID, model.ScheduleCron)
+	return nil
 }
 
+// StopModelSchedule stops the cron schedule for a specific model
+func (r *ModelCheckRunner) StopModelSchedule(modelID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	entryID, exists := r.cronEntries[modelID]
+	if !exists {
+		return
+	}
+
+	r.cron.Remove(entryID)
+	delete(r.cronEntries, modelID)
+
+	// Stop cron if no more entries
+	if len(r.cronEntries) == 0 {
+		r.cron.Stop()
+	}
+
+	r.logf("模型 %s 的调度已停止", modelID)
+}
+
+// CheckSingleModel performs a check for a single model
 func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 	r.mu.Lock()
 	if _, exists := r.runningModes[modelID]; exists {
@@ -629,34 +632,50 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 		r.mu.Unlock()
 	}()
 
-	r.logf("开始检查单个模型: %s", modelID)
+	r.logf("开始检查模型: %s", modelID)
 
 	ctx := context.Background()
 
+	// Load global config
+	globalCfg, err := r.app.loadModelCheckerConfig(ctx)
+	if err != nil {
+		r.logf("加载全局配置失败: %v", err)
+		return
+	}
+
 	// Load model configuration
 	var model trackedModel
-	var lastAvailableKeysJSON string
+	var lastAvailableKeysJSON sql.NullString
+	var lastStatus sql.NullString
+	var enabledInt int
 	row := r.app.db.QueryRowContext(ctx, `
-		SELECT model_id, provider, enabled, timeout_seconds, max_retries,
-		       last_status, last_available_keys
+		SELECT model_id, provider, enabled, schedule_cron, last_status, last_available_keys
 		FROM model_checker_tracked_models
 		WHERE model_id = ?
 	`, modelID)
 
-	err := row.Scan(&model.ModelID, &model.Provider, &model.Enabled,
-		&model.TimeoutSeconds, &model.MaxRetries,
-		&model.LastStatus, &lastAvailableKeysJSON)
+	err = row.Scan(&model.ModelID, &model.Provider, &enabledInt,
+		&model.ScheduleCron, &lastStatus, &lastAvailableKeysJSON)
 	if err != nil {
 		r.logf("加载模型配置失败: %s - %v", modelID, err)
 		return
 	}
 
-	if lastAvailableKeysJSON != "" && lastAvailableKeysJSON != "null" {
-		json.Unmarshal([]byte(lastAvailableKeysJSON), &model.LastAvailableKeys)
+	model.Enabled = enabledInt == 1
+	if lastStatus.Valid {
+		model.LastStatus = &lastStatus.String
+	}
+	if lastAvailableKeysJSON.Valid && lastAvailableKeysJSON.String != "" {
+		json.Unmarshal([]byte(lastAvailableKeysJSON.String), &model.LastAvailableKeys)
+	}
+
+	if !model.Enabled {
+		r.logf("模型 %s 未启用，跳过检查", modelID)
+		return
 	}
 
 	// Perform check
-	result := r.checkSingleModel(ctx, model)
+	result := r.checkSingleModel(ctx, model, globalCfg)
 
 	// Update model status
 	r.updateModelStatus(ctx, result)
@@ -664,259 +683,16 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 	r.logf("完成检查模型: %s - 状态: %s", modelID, result.Status)
 }
 
-func (r *ModelCheckRunner) StartDaemon() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 
-	if r.daemonStop != nil {
-		return fmt.Errorf("Daemon 已在运行")
-	}
-
-	// Load configuration
-	ctx := context.Background()
-	cfg, err := r.app.loadModelCheckerConfig(ctx)
-	if err != nil {
-		return fmt.Errorf("加载配置失败: %w", err)
-	}
-
-	if !cfg.Enabled {
-		return fmt.Errorf("模型巡检未启用")
-	}
-
-	// Parse cron schedule
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	schedule, err := parser.Parse(cfg.ScheduleCron)
-	if err != nil {
-		return fmt.Errorf("Cron 表达式无效: %w", err)
-	}
-
-	// Set timezone
-	if spec, ok := schedule.(*cron.SpecSchedule); ok {
-		spec.Location = appTimeLocation
-	}
-
-	r.daemonStop = make(chan struct{})
-	r.daemonDone = make(chan struct{})
-	r.cron = cron.New(cron.WithLocation(appTimeLocation))
-
-	// Add cron job
-	_, err = r.cron.AddFunc(cfg.ScheduleCron, func() {
-		r.logf("定时触发模型巡检")
-		go r.runModelCheck("daemon")
-	})
-	if err != nil {
-		r.daemonStop = nil
-		r.daemonDone = nil
-		r.cron = nil
-		return fmt.Errorf("添加定时任务失败: %w", err)
-	}
-
-	r.logf("Daemon 已启动 - Cron: %s", cfg.ScheduleCron)
-	r.cron.Start()
-
-	// Monitor stop signal
-	go func() {
-		<-r.daemonStop
-		if r.cron != nil {
-			r.cron.Stop()
-		}
-		close(r.daemonDone)
-	}()
-
-	return nil
-}
-
-func (r *ModelCheckRunner) Stop() {
-	r.mu.Lock()
-	stopChan := r.daemonStop
-	doneChan := r.daemonDone
-	r.mu.Unlock()
-
-	if stopChan == nil {
-		return
-	}
-
-	r.logf("停止 Daemon...")
-	close(stopChan)
-	if doneChan != nil {
-		<-doneChan
-	}
-
-	r.mu.Lock()
-	r.daemonStop = nil
-	r.daemonDone = nil
-	if r.cron != nil {
-		r.cron.Stop()
-		r.cron = nil
-	}
-	r.mu.Unlock()
-}
 
 // runModelCheck performs the main check logic for all enabled models
-func (r *ModelCheckRunner) runModelCheck(mode string) {
-	ctx := context.Background()
 
-	r.mu.Lock()
-	r.state = "running"
-	r.detail = ""
-	modeStr := mode
-	r.mode = &modeStr
-	now := time.Now()
-	r.lastStartedAt = &now
-	r.stats = modelCheckStats{}
-	r.mu.Unlock()
 
-	r.logf("开始模型巡检 (模式: %s)", mode)
 
-	// Create run record
-	runID, err := r.createRunRecord(ctx, mode)
-	if err != nil {
-		r.finishRun("failed", fmt.Sprintf("创建运行记录失败: %v", err))
-		return
-	}
 
-	// Load enabled models
-	models, err := r.loadEnabledModels(ctx)
-	if err != nil {
-		r.updateRunRecord(ctx, runID, "failed", fmt.Sprintf("加载模型列表失败: %v", err))
-		r.finishRun("failed", fmt.Sprintf("加载模型列表失败: %v", err))
-		return
-	}
 
-	if len(models) == 0 {
-		r.logf("没有启用的监控模型")
-		r.updateRunRecord(ctx, runID, "completed", "没有启用的监控模型")
-		r.finishRun("completed", "没有启用的监控模型")
-		return
-	}
 
-	r.logf("找到 %d 个启用的监控模型", len(models))
-
-	// Check each model
-	results := make([]checkModelResult, 0, len(models))
-	for _, model := range models {
-		r.logf("检查模型: %s", model.ModelID)
-		result := r.checkSingleModel(ctx, model)
-		results = append(results, result)
-
-		// Update statistics
-		r.mu.Lock()
-		r.stats.TotalModels++
-		switch result.Status {
-		case "available":
-			r.stats.AvailableModels++
-		case "unavailable":
-			r.stats.UnavailableModels++
-		case "error":
-			r.stats.ErrorModels++
-		}
-		switch result.ChangeType {
-		case "newly_available":
-			r.stats.NewlyAvailable++
-		case "newly_unavailable":
-			r.stats.NewlyUnavailable++
-		}
-		r.mu.Unlock()
-	}
-
-	// Save run details
-	if err := r.saveRunDetails(ctx, runID, results); err != nil {
-		r.logf("保存巡检详情失败: %v", err)
-	}
-
-	// Update model statuses
-	for _, result := range results {
-		r.updateModelStatus(ctx, result)
-	}
-
-	// Update run record
-	r.mu.Lock()
-	stats := r.stats
-	r.mu.Unlock()
-
-	r.updateRunRecordWithStats(ctx, runID, "completed", "", stats)
-	r.finishRun("completed", fmt.Sprintf("检查完成: %d 个模型", stats.TotalModels))
-}
-
-func (r *ModelCheckRunner) createRunRecord(ctx context.Context, mode string) (int64, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
-	result, err := r.app.db.ExecContext(ctx, `
-		INSERT INTO model_checker_runs (mode, state, started_at)
-		VALUES (?, 'running', ?)
-	`, mode, now)
-	if err != nil {
-		return 0, err
-	}
-	return result.LastInsertId()
-}
-
-func (r *ModelCheckRunner) updateRunRecord(ctx context.Context, runID int64, state, detail string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := r.app.db.ExecContext(ctx, `
-		UPDATE model_checker_runs
-		SET state = ?, detail = ?, finished_at = ?, updated_at = datetime('now')
-		WHERE id = ?
-	`, state, detail, now, runID)
-	return err
-}
-
-func (r *ModelCheckRunner) updateRunRecordWithStats(ctx context.Context, runID int64, state, detail string, stats modelCheckStats) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := r.app.db.ExecContext(ctx, `
-		UPDATE model_checker_runs
-		SET state = ?, detail = ?, finished_at = ?,
-		    total_models = ?, available_models = ?, unavailable_models = ?,
-		    newly_available = ?, newly_unavailable = ?, error_models = ?,
-		    updated_at = datetime('now')
-		WHERE id = ?
-	`, state, detail, now,
-		stats.TotalModels, stats.AvailableModels, stats.UnavailableModels,
-		stats.NewlyAvailable, stats.NewlyUnavailable, stats.ErrorModels,
-		runID)
-	return err
-}
-
-func (r *ModelCheckRunner) finishRun(state, detail string) {
-	r.mu.Lock()
-	r.state = state
-	r.detail = detail
-	now := time.Now()
-	r.lastFinishedAt = &now
-	r.mu.Unlock()
-	r.logf("巡检完成 - 状态: %s", state)
-}
-
-func (r *ModelCheckRunner) loadEnabledModels(ctx context.Context) ([]trackedModel, error) {
-	rows, err := r.app.db.QueryContext(ctx, `
-		SELECT model_id, provider, timeout_seconds, max_retries,
-		       last_status, last_available_keys
-		FROM model_checker_tracked_models
-		WHERE enabled = 1
-		ORDER BY model_id
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	models := []trackedModel{}
-	for rows.Next() {
-		var m trackedModel
-		var lastAvailableKeysJSON string
-		err := rows.Scan(&m.ModelID, &m.Provider, &m.TimeoutSeconds,
-			&m.MaxRetries, &m.LastStatus, &lastAvailableKeysJSON)
-		if err != nil {
-			return nil, err
-		}
-		if lastAvailableKeysJSON != "" && lastAvailableKeysJSON != "null" {
-			json.Unmarshal([]byte(lastAvailableKeysJSON), &m.LastAvailableKeys)
-		}
-		models = append(models, m)
-	}
-	return models, rows.Err()
-}
-
-func (r *ModelCheckRunner) checkSingleModel(ctx context.Context, model trackedModel) checkModelResult {
+func (r *ModelCheckRunner) checkSingleModel(ctx context.Context, model trackedModel, globalCfg ModelCheckerConfig) checkModelResult {
 	result := checkModelResult{
 		ModelID:       model.ModelID,
 		Provider:      model.Provider,
@@ -942,16 +718,28 @@ func (r *ModelCheckRunner) checkSingleModel(ctx context.Context, model trackedMo
 	if len(keys) == 0 {
 		result.ErrorMessage = "没有可用的 API Keys"
 		result.Status = "unavailable"
-		result.ChangeType = r.detectChange(model.LastStatus, result.Status, model.LastAvailableKeys, result.AvailableKeys)
+		lastStatus := ""
+		if model.LastStatus != nil {
+			lastStatus = *model.LastStatus
+		}
+		result.ChangeType = r.detectChange(lastStatus, result.Status, model.LastAvailableKeys, result.AvailableKeys)
 		return result
 	}
 
 	// Check model availability on each key
-	timeout := time.Duration(model.TimeoutSeconds) * time.Second
+	timeout := time.Duration(globalCfg.TimeoutSeconds) * time.Second
 	availableKeys := []string{}
 
+	maxRetries := globalCfg.MaxRetries
 	for _, key := range keys {
-		if r.checkModelOnKey(ctx, cfg, key, model.ModelID, timeout) {
+		available := false
+		for retry := 0; retry <= maxRetries; retry++ {
+			if r.checkModelOnKey(ctx, cfg, key, model.ModelID, timeout) {
+				available = true
+				break
+			}
+		}
+		if available {
 			availableKeys = append(availableKeys, key)
 		}
 	}
@@ -963,7 +751,11 @@ func (r *ModelCheckRunner) checkSingleModel(ctx context.Context, model trackedMo
 		result.Status = "unavailable"
 	}
 
-	result.ChangeType = r.detectChange(model.LastStatus, result.Status, model.LastAvailableKeys, result.AvailableKeys)
+	lastStatus := ""
+	if model.LastStatus != nil {
+		lastStatus = *model.LastStatus
+	}
+	result.ChangeType = r.detectChange(lastStatus, result.Status, model.LastAvailableKeys, result.AvailableKeys)
 
 	return result
 }
@@ -1071,28 +863,6 @@ func stringSlicesEqual(a, b []string) bool {
 	return true
 }
 
-func (r *ModelCheckRunner) saveRunDetails(ctx context.Context, runID int64, results []checkModelResult) error {
-	if len(results) == 0 {
-		return nil
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	for _, result := range results {
-		availableKeysJSON, _ := json.Marshal(result.AvailableKeys)
-		_, err := r.app.db.ExecContext(ctx, `
-			INSERT INTO model_checker_run_models
-			(run_id, model_id, provider, status, available_keys, error_message, change_type, checked_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, runID, result.ModelID, result.Provider, result.Status,
-			string(availableKeysJSON), result.ErrorMessage, result.ChangeType, now)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
 
 func (r *ModelCheckRunner) updateModelStatus(ctx context.Context, result checkModelResult) error {
 	now := time.Now().UTC().Format(time.RFC3339)

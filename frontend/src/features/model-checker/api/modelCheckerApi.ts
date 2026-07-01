@@ -19,18 +19,6 @@ export async function getModelCheckerStatus(): Promise<ModelCheckerStatus> {
   return apiClient.get<ModelCheckerStatus>('/model-checker/status')
 }
 
-export async function runModelCheckerOnce(): Promise<void> {
-  return apiClient.post<void>('/model-checker/run-once')
-}
-
-export async function startModelChecker(): Promise<void> {
-  return apiClient.post<void>('/model-checker/start')
-}
-
-export async function stopModelChecker(): Promise<void> {
-  return apiClient.post<void>('/model-checker/stop')
-}
-
 export async function clearModelCheckerLogs(): Promise<void> {
   return apiClient.post<void>('/model-checker/logs/clear')
 }
@@ -42,10 +30,7 @@ export async function getTrackedModels(): Promise<TrackedModel[]> {
 export async function addTrackedModel(payload: {
   model_id: string
   provider: string
-  check_interval_minutes?: number
-  timeout_seconds?: number
-  max_retries?: number
-  alert_on_unavailable?: boolean
+  schedule_cron?: string
 }): Promise<void> {
   return apiClient.post<void>('/model-checker/models', payload)
 }
@@ -58,10 +43,7 @@ export async function updateTrackedModel(
   modelId: string,
   payload: {
     enabled?: boolean
-    check_interval_minutes?: number
-    timeout_seconds?: number
-    max_retries?: number
-    alert_on_unavailable?: boolean
+    schedule_cron?: string
   }
 ): Promise<void> {
   return apiClient.put<void>(`/model-checker/models/${encodeURIComponent(modelId)}`, payload)
@@ -71,6 +53,11 @@ export async function deleteTrackedModel(modelId: string): Promise<void> {
   return apiClient.delete(`/model-checker/models/${encodeURIComponent(modelId)}`)
 }
 
-export async function checkTrackedModel(modelId: string): Promise<void> {
-  return apiClient.post<void>(`/model-checker/models/${encodeURIComponent(modelId)}/check`)
+export async function startModelSchedule(modelId: string): Promise<void> {
+  return apiClient.post<void>(`/model-checker/models/${encodeURIComponent(modelId)}/start`)
 }
+
+export async function stopModelSchedule(modelId: string): Promise<void> {
+  return apiClient.post<void>(`/model-checker/models/${encodeURIComponent(modelId)}/stop`)
+}
+
