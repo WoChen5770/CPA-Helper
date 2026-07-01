@@ -17,8 +17,6 @@ const stats = ref({
   unavailable: 0,
   error: 0,
 })
-const daemonRunning = ref(false)
-const lastCheckTime = ref<string | null>(null)
 
 let statusInterval: number | null = null
 
@@ -30,14 +28,9 @@ onMounted(async () => {
 const loadData = async () => {
   loading.value = true
   try {
-    const [models, status] = await Promise.all([
-      getTrackedModels(),
-      getModelCheckerStatus(),
-    ])
+    const models = await getTrackedModels()
 
     trackedModels.value = models
-    daemonRunning.value = status.daemon_running
-    lastCheckTime.value = status.last_finished_at
 
     // Calculate stats
     stats.value = {
@@ -189,16 +182,6 @@ export default { name: 'ModelStatusView' }
               :value-style="{ color: '#f0a020' }"
             />
           </NCard>
-        </div>
-        <div style="margin-top: 16px">
-          <NSpace :size="12">
-            <NTag :type="daemonRunning ? 'success' : 'default'">
-              {{ daemonRunning ? t('Daemon 运行中', 'Daemon Running') : t('Daemon 已停止', 'Daemon Stopped') }}
-            </NTag>
-            <span style="color: #888; font-size: 14px">
-              {{ t('最后巡检时间', 'Last Check Time') }}: {{ formatTime(lastCheckTime) }}
-            </span>
-          </NSpace>
         </div>
       </NCard>
 
