@@ -1,0 +1,76 @@
+name: Build Dev Docker Image
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+env:
+  DOCKERHUB_IMAGE_NAME: jaycq/cpa-helper
+  GHCR_REGISTRY: ghcr.io
+  IMAGE_BASENAME: cpa-helper
+
+jobs:
+  build-dev:
+    name: Build and push dev Docker image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Generate dev version tag
+        id: dev-version
+        shell: bash
+        run: |
+          timestamp="$(date -u +%Y%m%d%H%M%S)"
+          dev_tag="dev-${timestamp}"
+          echo "tag=${dev_tag}" >> "$GITHUB_OUTPUT"
+          echo "Generated dev tag: ${dev_tag}"
+
+      - name: Resolve container image names
+        id: image-names
+        shell: bash
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "dockerhub=${DOCKERHUB_IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "ghcr=${GHCR_REGISTRY}/${owner}/${IMAGE_BASENAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push dev Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.image-names.outputs.dockerhub }}:${{ steps.dev-version.outputs.tag }}
+            ${{ steps.image-names.outputs.dockerhub }}:dev
+            ${{ steps.image-names.outputs.ghcr }}:${{ steps.dev-version.outputs.tag }}
+            ${{ steps.image-names.outputs.ghcr }}:dev
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.dev-version.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
