@@ -629,8 +629,6 @@ export interface ApiKeyUpdatePayload {
 // Model Checker types
 export interface ModelCheckerConfig {
   timeout_seconds: number
-  max_retries: number
-  alert_on_unavailable: boolean
   test_api_key: string
 }
 
@@ -664,6 +662,7 @@ export interface TrackedModel {
   last_status: string | null
   last_checked_at: string | null
   last_available_at: string | null
+  next_run_at: string | null
   first_seen_at: string | null
   created_at: string
   updated_at: string

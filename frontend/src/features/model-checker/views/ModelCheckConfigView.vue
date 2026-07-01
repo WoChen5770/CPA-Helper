@@ -42,8 +42,6 @@ const logs = ref<string[]>([])
 const trackedModels = ref<TrackedModel[]>([])
 const globalConfig = ref<ModelCheckerConfig>({
   timeout_seconds: 30,
-  max_retries: 2,
-  alert_on_unavailable: true,
   test_api_key: '',
 })
 const availableModels = ref<AvailableModel[]>([])
@@ -247,52 +245,18 @@ const columns: DataTableColumns<TrackedModel> = [
     },
   },
   {
-    title: () => t('状态', 'Status'),
-    key: 'last_status',
-    width: 100,
-    render: (row) => {
-      const status = row.last_status || 'unknown'
-      const type = status === 'available' ? 'success' : status === 'unavailable' ? 'error' : 'default'
-      return h(NTag, { type, size: 'small' }, { default: () => status })
-    },
-  },
-  {
     title: () => t('操作', 'Actions'),
     key: 'actions',
-    width: 250,
+    width: 100,
     render: (row) => {
       return h(
-        NSpace,
-        { size: 'small' },
+        NButton,
         {
-          default: () => [
-            h(
-              NButton,
-              {
-                size: 'small',
-                onClick: () => handleStartSchedule(row.model_id),
-              },
-              { default: () => t('启动', 'Start') }
-            ),
-            h(
-              NButton,
-              {
-                size: 'small',
-                onClick: () => handleStopSchedule(row.model_id),
-              },
-              { default: () => t('停止', 'Stop') }
-            ),
-            h(
-              NButton,
-              {
-                size: 'small',
-                type: 'error',
-                onClick: () => handleDeleteModel(row.model_id),
-              },
-              { default: () => t('移除', 'Remove') }
-            ),
-          ],
-        }
+          size: 'small',
+          type: 'error',
+          onClick: () => handleDeleteModel(row.model_id),
+        },
+        { default: () => t('移除', 'Remove') }
       )
     },
   },
@@ -313,8 +277,7 @@ export default { name: 'ModelCheckConfigView' }
             <label>{{ t('测试 API Key', 'Test API Key') }}</label>
             <NInput
               v-model:value="globalConfig.test_api_key"
-              type="password"
-              show-password-on="click"
+              type="text"
               :placeholder="t('用于测试模型可用性的专用 Key', 'Dedicated key for testing model availability')"
               style="width: 400px"
             />
@@ -328,33 +291,8 @@ export default { name: 'ModelCheckConfigView' }
               style="width: 150px"
             />
           </div>
-          <div class="config-item">
-            <label>{{ t('最大重试次数', 'Max Retries') }}</label>
-            <NInputNumber
-              v-model:value="globalConfig.max_retries"
-              :min="0"
-              :max="10"
-              style="width: 150px"
-            />
-          </div>
-          <div class="config-item">
-            <label>{{ t('不可用时告警', 'Alert on Unavailable') }}</label>
-            <NSwitch v-model:value="globalConfig.alert_on_unavailable" />
-          </div>
           <NButton type="primary" @click="handleSaveGlobalConfig">
             {{ t('保存配置', 'Save Configuration') }}
-          </NButton>
-        </NSpace>
-      </NCard>
-
-      <!-- 状态信息 -->
-      <NCard :title="t('状态', 'Status')">
-        <NSpace vertical :size="12">
-          <NTag :type="daemonRunning ? 'success' : 'default'">
-            {{ daemonRunning ? t('有调度运行中', 'Schedules Running') : t('没有调度运行', 'No Schedules') }}
-          </NTag>
-          <NButton size="small" @click="handleClearLogs">
-            {{ t('清除日志', 'Clear Logs') }}
           </NButton>
         </NSpace>
       </NCard>
@@ -388,14 +326,19 @@ export default { name: 'ModelCheckConfigView' }
 
       <!-- 日志 -->
       <NCard :title="t('日志', 'Logs')">
-        <div class="logs-container">
-          <div v-for="(log, index) in logs" :key="index" class="log-line">
-            {{ log }}
+        <NSpace vertical :size="12">
+          <NButton size="small" @click="handleClearLogs">
+            {{ t('清除日志', 'Clear Logs') }}
+          </NButton>
+          <div class="logs-container">
+            <div v-for="(log, index) in logs" :key="index" class="log-line">
+              {{ log }}
+            </div>
+            <div v-if="logs.length === 0" class="log-line empty">
+              {{ t('暂无日志', 'No logs') }}
+            </div>
           </div>
-          <div v-if="logs.length === 0" class="log-line empty">
-            {{ t('暂无日志', 'No logs') }}
-          </div>
-        </div>
+        </NSpace>
       </NCard>
     </NSpace>
   </div>

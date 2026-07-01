@@ -147,8 +147,11 @@ const accountInspectionMenuItems = computed<MenuOption[]>(() => [
     icon: renderIcon(Activity),
   },
   { label: t('账号状态', 'Account Status'), key: '/admin/account-status', icon: renderIcon(ListChecks) },
-  { label: t('模型巡检配置', 'Model Check Config'), key: '/admin/model-checker', icon: renderIcon(Cpu) },
-  { label: t('模型状态', 'Model Status'), key: '/admin/model-status', icon: renderIcon(Activity) },
+])
+
+const modelInspectionMenuItems = computed<MenuOption[]>(() => [
+  { label: t('巡检配置', 'Inspection Config'), key: '/admin/model-checker', icon: renderIcon(Cpu) },
+  { label: t('模型状态', 'Model Status'), key: '/admin/model-status', icon: renderIcon(Monitor) },
 ])
 
 const accountMenuItems = computed<MenuOption[]>(() => [
@@ -211,6 +214,13 @@ const menuOptions = computed<MenuOption[]>(() => {
       icon: renderIcon(Activity),
       children: accountInspectionMenuItems.value,
     })
+    groups.push({
+      type: 'group',
+      label: t('模型巡检', 'Model Inspection'),
+      key: 'model-inspection-group',
+      icon: renderIcon(Cpu),
+      children: modelInspectionMenuItems.value,
+    })
   }
   groups.push({
     type: 'group',
@@ -224,7 +234,7 @@ const menuOptions = computed<MenuOption[]>(() => {
 
 const leafMenuOptions = computed(() =>
   isAdmin.value
-    ? [...adminMenuItems.value, ...accountInspectionMenuItems.value, ...accountMenuItems.value]
+    ? [...adminMenuItems.value, ...accountInspectionMenuItems.value, ...modelInspectionMenuItems.value, ...accountMenuItems.value]
     : accountMenuItems.value,
 )
 

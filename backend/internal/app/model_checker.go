@@ -64,17 +64,13 @@ type modelCheckStatusResponse struct {
 }
 
 type ModelCheckerConfig struct {
-	TimeoutSeconds     int    `json:"timeout_seconds"`
-	MaxRetries         int    `json:"max_retries"`
-	AlertOnUnavailable bool   `json:"alert_on_unavailable"`
-	TestAPIKey         string `json:"test_api_key"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	TestAPIKey     string `json:"test_api_key"`
 }
 
 type modelCheckerSettingsUpdateRequest struct {
-	TimeoutSeconds     *int    `json:"timeout_seconds"`
-	MaxRetries         *int    `json:"max_retries"`
-	AlertOnUnavailable *bool   `json:"alert_on_unavailable"`
-	TestAPIKey         *string `json:"test_api_key"`
+	TimeoutSeconds *int    `json:"timeout_seconds"`
+	TestAPIKey     *string `json:"test_api_key"`
 }
 
 type trackedModel struct {
@@ -85,6 +81,7 @@ type trackedModel struct {
 	LastStatus      *string `json:"last_status"`
 	LastCheckedAt   *string `json:"last_checked_at"`
 	LastAvailableAt *string `json:"last_available_at"`
+	NextRunAt       *string `json:"next_run_at"`
 	FirstSeenAt     *string `json:"first_seen_at"`
 	CreatedAt       string  `json:"created_at"`
 	UpdatedAt       string  `json:"updated_at"`
@@ -263,9 +260,6 @@ func (a *App) loadModelCheckerConfig(ctx context.Context) (ModelCheckerConfig, e
 	if cfg.TimeoutSeconds == 0 {
 		cfg.TimeoutSeconds = 30
 	}
-	if cfg.MaxRetries == 0 {
-		cfg.MaxRetries = 2
-	}
 
 	return cfg, nil
 }
@@ -379,15 +373,6 @@ func (a *App) updateModelCheckerSettings(w http.ResponseWriter, r *http.Request)
 		}
 		cfg.TimeoutSeconds = *payload.TimeoutSeconds
 	}
-	if payload.MaxRetries != nil {
-		if *payload.MaxRetries < 0 || *payload.MaxRetries > 10 {
-			return validationError("max_retries 超出范围")
-		}
-		cfg.MaxRetries = *payload.MaxRetries
-	}
-	if payload.AlertOnUnavailable != nil {
-		cfg.AlertOnUnavailable = *payload.AlertOnUnavailable
-	}
 	if payload.TestAPIKey != nil {
 		cfg.TestAPIKey = *payload.TestAPIKey
 	}
@@ -428,6 +413,15 @@ func (a *App) getTrackedModels(w http.ResponseWriter, r *http.Request) error {
 		if lastStatus.Valid {
 			m.LastStatus = &lastStatus.String
 		}
+
+		// Calculate next run time from cron schedule
+		if entryID, exists := a.modelCheckRunner.cronEntries[m.ModelID]; exists {
+			if entry := a.modelCheckRunner.cron.Entry(entryID); entry.ID != 0 {
+				nextRun := entry.Next.Format(time.RFC3339)
+				m.NextRunAt = &nextRun
+			}
+		}
+
 		models = append(models, m)
 	}
 
@@ -763,15 +757,8 @@ func (r *ModelCheckRunner) checkSingleModel(ctx context.Context, model trackedMo
 
 	// Check model availability with test key
 	timeout := time.Duration(globalCfg.TimeoutSeconds) * time.Second
-	maxRetries := globalCfg.MaxRetries
 
-	available := false
-	for retry := 0; retry <= maxRetries; retry++ {
-		if r.checkModelWithTestKey(ctx, cfg, globalCfg.TestAPIKey, model.ModelID, timeout) {
-			available = true
-			break
-		}
-	}
+	available := r.checkModelWithTestKey(ctx, cfg, globalCfg.TestAPIKey, model.ModelID, timeout)
 
 	if available {
 		result.Status = "available"

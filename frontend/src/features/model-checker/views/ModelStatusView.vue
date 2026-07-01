@@ -129,10 +129,10 @@ const columns: DataTableColumns<TrackedModel> = [
     render: (row) => formatTime(row.last_checked_at),
   },
   {
-    title: () => t('最后可用时间', 'Last Available'),
-    key: 'last_available_at',
+    title: () => t('下次运行时间', 'Next Run'),
+    key: 'next_run_at',
     width: 180,
-    render: (row) => formatTime(row.last_available_at),
+    render: (row) => formatTime(row.next_run_at),
   },
 ]
 
