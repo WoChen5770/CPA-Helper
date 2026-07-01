@@ -631,6 +631,7 @@ export interface ModelCheckerConfig {
   timeout_seconds: number
   max_retries: number
   alert_on_unavailable: boolean
+  test_api_key: string
 }
 
 export interface ModelCheckerStatus {
@@ -661,7 +662,6 @@ export interface TrackedModel {
   enabled: boolean
   schedule_cron: string
   last_status: string | null
-  last_available_keys: string[]
   last_checked_at: string | null
   last_available_at: string | null
   first_seen_at: string | null

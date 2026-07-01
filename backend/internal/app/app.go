@@ -156,6 +156,7 @@ func (a *App) startBackground(ctx context.Context) {
 	a.collector.Start()
 	a.keeper.LoadPersistedState(ctx)
 	a.keeper.StartAutoIfConfigured()
+	a.modelCheckRunner.LoadAndStartSchedules(ctx)
 }
 
 func (a *App) Close() {

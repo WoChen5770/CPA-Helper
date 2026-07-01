@@ -64,29 +64,30 @@ type modelCheckStatusResponse struct {
 }
 
 type ModelCheckerConfig struct {
-	TimeoutSeconds     int  `json:"timeout_seconds"`
-	MaxRetries         int  `json:"max_retries"`
-	AlertOnUnavailable bool `json:"alert_on_unavailable"`
+	TimeoutSeconds     int    `json:"timeout_seconds"`
+	MaxRetries         int    `json:"max_retries"`
+	AlertOnUnavailable bool   `json:"alert_on_unavailable"`
+	TestAPIKey         string `json:"test_api_key"`
 }
 
 type modelCheckerSettingsUpdateRequest struct {
-	TimeoutSeconds     *int  `json:"timeout_seconds"`
-	MaxRetries         *int  `json:"max_retries"`
-	AlertOnUnavailable *bool `json:"alert_on_unavailable"`
+	TimeoutSeconds     *int    `json:"timeout_seconds"`
+	MaxRetries         *int    `json:"max_retries"`
+	AlertOnUnavailable *bool   `json:"alert_on_unavailable"`
+	TestAPIKey         *string `json:"test_api_key"`
 }
 
 type trackedModel struct {
-	ModelID           string   `json:"model_id"`
-	Provider          string   `json:"provider"`
-	Enabled           bool     `json:"enabled"`
-	ScheduleCron      string   `json:"schedule_cron"`
-	LastStatus        *string  `json:"last_status"`
-	LastAvailableKeys []string `json:"last_available_keys"`
-	LastCheckedAt     *string  `json:"last_checked_at"`
-	LastAvailableAt   *string  `json:"last_available_at"`
-	FirstSeenAt       *string  `json:"first_seen_at"`
-	CreatedAt         string   `json:"created_at"`
-	UpdatedAt         string   `json:"updated_at"`
+	ModelID         string  `json:"model_id"`
+	Provider        string  `json:"provider"`
+	Enabled         bool    `json:"enabled"`
+	ScheduleCron    string  `json:"schedule_cron"`
+	LastStatus      *string `json:"last_status"`
+	LastCheckedAt   *string `json:"last_checked_at"`
+	LastAvailableAt *string `json:"last_available_at"`
+	FirstSeenAt     *string `json:"first_seen_at"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
 }
 
 type addTrackedModelRequest struct {
@@ -101,12 +102,11 @@ type updateTrackedModelRequest struct {
 }
 
 type checkModelResult struct {
-	ModelID       string
-	Provider      string
-	Status        string
-	AvailableKeys []string
-	ErrorMessage  string
-	ChangeType    string
+	ModelID      string
+	Provider     string
+	Status       string
+	ErrorMessage string
+	ChangeType   string
 }
 
 func newModelCheckRunner(app *App) *ModelCheckRunner {
@@ -117,6 +117,49 @@ func newModelCheckRunner(app *App) *ModelCheckRunner {
 		state:        "idle",
 		logs:         make([]string, 0, modelCheckerMaxInMemoryLogs),
 		cron:         cron.New(cron.WithLocation(appTimeLocation)),
+	}
+}
+
+// LoadAndStartSchedules loads all enabled models and starts their schedules
+func (r *ModelCheckRunner) LoadAndStartSchedules(ctx context.Context) {
+	rows, err := r.app.db.QueryContext(ctx, `
+		SELECT model_id, schedule_cron
+		FROM model_checker_tracked_models
+		WHERE enabled = 1
+	`)
+	if err != nil {
+		slog.Error("Failed to load enabled models for auto-start", "error", err)
+		return
+	}
+	defer rows.Close()
+
+	var modelsToStart []struct {
+		ModelID      string
+		ScheduleCron string
+	}
+
+	for rows.Next() {
+		var modelID, scheduleCron string
+		if err := rows.Scan(&modelID, &scheduleCron); err != nil {
+			slog.Error("Failed to scan model row", "error", err)
+			continue
+		}
+		modelsToStart = append(modelsToStart, struct {
+			ModelID      string
+			ScheduleCron string
+		}{modelID, scheduleCron})
+	}
+
+	if len(modelsToStart) == 0 {
+		return
+	}
+
+	r.logf("自动启动 %d 个已启用模型的调度", len(modelsToStart))
+
+	for _, m := range modelsToStart {
+		if err := r.StartModelSchedule(ctx, m.ModelID); err != nil {
+			slog.Warn("Failed to auto-start schedule for model", "model_id", m.ModelID, "error", err)
+		}
 	}
 }
 
@@ -338,6 +381,9 @@ func (a *App) updateModelCheckerSettings(w http.ResponseWriter, r *http.Request)
 	if payload.AlertOnUnavailable != nil {
 		cfg.AlertOnUnavailable = *payload.AlertOnUnavailable
 	}
+	if payload.TestAPIKey != nil {
+		cfg.TestAPIKey = *payload.TestAPIKey
+	}
 
 	if err := a.saveModelCheckerConfig(r.Context(), cfg); err != nil {
 		return err
@@ -349,7 +395,7 @@ func (a *App) updateModelCheckerSettings(w http.ResponseWriter, r *http.Request)
 
 func (a *App) getTrackedModels(w http.ResponseWriter, r *http.Request) error {
 	rows, err := a.db.QueryContext(r.Context(), `
-		SELECT model_id, provider, enabled, schedule_cron, last_status, last_available_keys,
+		SELECT model_id, provider, enabled, schedule_cron, last_status,
 		       last_checked_at, last_available_at, first_seen_at, created_at, updated_at
 		FROM model_checker_tracked_models
 		ORDER BY model_id
@@ -362,12 +408,11 @@ func (a *App) getTrackedModels(w http.ResponseWriter, r *http.Request) error {
 	models := []trackedModel{}
 	for rows.Next() {
 		var m trackedModel
-		var keysJSON sql.NullString
 		var lastStatus sql.NullString
 		var enabledInt int
 		if err := rows.Scan(
 			&m.ModelID, &m.Provider, &enabledInt, &m.ScheduleCron,
-			&lastStatus, &keysJSON, &m.LastCheckedAt, &m.LastAvailableAt,
+			&lastStatus, &m.LastCheckedAt, &m.LastAvailableAt,
 			&m.FirstSeenAt, &m.CreatedAt, &m.UpdatedAt,
 		); err != nil {
 			return err
@@ -375,12 +420,6 @@ func (a *App) getTrackedModels(w http.ResponseWriter, r *http.Request) error {
 		m.Enabled = enabledInt == 1
 		if lastStatus.Valid {
 			m.LastStatus = &lastStatus.String
-		}
-		if keysJSON.Valid {
-			json.Unmarshal([]byte(keysJSON.String), &m.LastAvailableKeys)
-		}
-		if m.LastAvailableKeys == nil {
-			m.LastAvailableKeys = []string{}
 		}
 		models = append(models, m)
 	}
@@ -431,17 +470,16 @@ func (a *App) addTrackedModel(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) getTrackedModel(w http.ResponseWriter, r *http.Request, modelID string) error {
 	var m trackedModel
-	var keysJSON sql.NullString
 	var lastStatus sql.NullString
 	var enabledInt int
 	err := a.db.QueryRowContext(r.Context(), `
-		SELECT model_id, provider, enabled, schedule_cron, last_status, last_available_keys,
+		SELECT model_id, provider, enabled, schedule_cron, last_status,
 		       last_checked_at, last_available_at, first_seen_at, created_at, updated_at
 		FROM model_checker_tracked_models
 		WHERE model_id = ?
 	`, modelID).Scan(
 		&m.ModelID, &m.Provider, &enabledInt, &m.ScheduleCron,
-		&lastStatus, &keysJSON, &m.LastCheckedAt, &m.LastAvailableAt,
+		&lastStatus, &m.LastCheckedAt, &m.LastAvailableAt,
 		&m.FirstSeenAt, &m.CreatedAt, &m.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -454,12 +492,6 @@ func (a *App) getTrackedModel(w http.ResponseWriter, r *http.Request, modelID st
 	m.Enabled = enabledInt == 1
 	if lastStatus.Valid {
 		m.LastStatus = &lastStatus.String
-	}
-	if keysJSON.Valid {
-		json.Unmarshal([]byte(keysJSON.String), &m.LastAvailableKeys)
-	}
-	if m.LastAvailableKeys == nil {
-		m.LastAvailableKeys = []string{}
 	}
 
 	writeJSON(w, http.StatusOK, m)
@@ -645,17 +677,16 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 
 	// Load model configuration
 	var model trackedModel
-	var lastAvailableKeysJSON sql.NullString
 	var lastStatus sql.NullString
 	var enabledInt int
 	row := r.app.db.QueryRowContext(ctx, `
-		SELECT model_id, provider, enabled, schedule_cron, last_status, last_available_keys
+		SELECT model_id, provider, enabled, schedule_cron, last_status
 		FROM model_checker_tracked_models
 		WHERE model_id = ?
 	`, modelID)
 
 	err = row.Scan(&model.ModelID, &model.Provider, &enabledInt,
-		&model.ScheduleCron, &lastStatus, &lastAvailableKeysJSON)
+		&model.ScheduleCron, &lastStatus)
 	if err != nil {
 		r.logf("加载模型配置失败: %s - %v", modelID, err)
 		return
@@ -664,9 +695,6 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 	model.Enabled = enabledInt == 1
 	if lastStatus.Valid {
 		model.LastStatus = &lastStatus.String
-	}
-	if lastAvailableKeysJSON.Valid && lastAvailableKeysJSON.String != "" {
-		json.Unmarshal([]byte(lastAvailableKeysJSON.String), &model.LastAvailableKeys)
 	}
 
 	if !model.Enabled {
@@ -694,11 +722,17 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 
 func (r *ModelCheckRunner) checkSingleModel(ctx context.Context, model trackedModel, globalCfg ModelCheckerConfig) checkModelResult {
 	result := checkModelResult{
-		ModelID:       model.ModelID,
-		Provider:      model.Provider,
-		Status:        "error",
-		AvailableKeys: []string{},
-		ChangeType:    "no_change",
+		ModelID:    model.ModelID,
+		Provider:   model.Provider,
+		Status:     "error",
+		ChangeType: "no_change",
+	}
+
+	// Check if test API key is configured
+	if globalCfg.TestAPIKey == "" {
+		result.ErrorMessage = "测试 API Key 未配置"
+		result.Status = "error"
+		return result
 	}
 
 	// Get app config
@@ -708,44 +742,19 @@ func (r *ModelCheckRunner) checkSingleModel(ctx context.Context, model trackedMo
 		return result
 	}
 
-	// Get all API keys
-	keys, err := r.loadAPIKeys(ctx)
-	if err != nil {
-		result.ErrorMessage = fmt.Sprintf("加载 API Keys 失败: %v", err)
-		return result
-	}
-
-	if len(keys) == 0 {
-		result.ErrorMessage = "没有可用的 API Keys"
-		result.Status = "unavailable"
-		lastStatus := ""
-		if model.LastStatus != nil {
-			lastStatus = *model.LastStatus
-		}
-		result.ChangeType = r.detectChange(lastStatus, result.Status, model.LastAvailableKeys, result.AvailableKeys)
-		return result
-	}
-
-	// Check model availability on each key
+	// Check model availability with test key
 	timeout := time.Duration(globalCfg.TimeoutSeconds) * time.Second
-	availableKeys := []string{}
-
 	maxRetries := globalCfg.MaxRetries
-	for _, key := range keys {
-		available := false
-		for retry := 0; retry <= maxRetries; retry++ {
-			if r.checkModelOnKey(ctx, cfg, key, model.ModelID, timeout) {
-				available = true
-				break
-			}
-		}
-		if available {
-			availableKeys = append(availableKeys, key)
+
+	available := false
+	for retry := 0; retry <= maxRetries; retry++ {
+		if r.checkModelWithTestKey(ctx, cfg, globalCfg.TestAPIKey, model.ModelID, timeout) {
+			available = true
+			break
 		}
 	}
 
-	result.AvailableKeys = availableKeys
-	if len(availableKeys) > 0 {
+	if available {
 		result.Status = "available"
 	} else {
 		result.Status = "unavailable"
@@ -755,74 +764,46 @@ func (r *ModelCheckRunner) checkSingleModel(ctx context.Context, model trackedMo
 	if model.LastStatus != nil {
 		lastStatus = *model.LastStatus
 	}
-	result.ChangeType = r.detectChange(lastStatus, result.Status, model.LastAvailableKeys, result.AvailableKeys)
+	result.ChangeType = r.detectChange(lastStatus, result.Status)
 
 	return result
 }
 
-func (r *ModelCheckRunner) loadAPIKeys(ctx context.Context) ([]string, error) {
-	rows, err := r.app.db.QueryContext(ctx, `
-		SELECT api_key FROM api_keys WHERE api_key IS NOT NULL AND api_key != ''
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	keys := []string{}
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			return nil, err
-		}
-		keys = append(keys, key)
-	}
-	return keys, rows.Err()
-}
-
-func (r *ModelCheckRunner) checkModelOnKey(ctx context.Context, cfg AppConfig, apiKey, modelID string, timeout time.Duration) bool {
+func (r *ModelCheckRunner) checkModelWithTestKey(ctx context.Context, cfg AppConfig, testKey, modelID string, timeout time.Duration) bool {
 	headers := http.Header{}
-	headers.Set("Authorization", "Bearer "+apiKey)
+	headers.Set("Authorization", "Bearer "+testKey)
+	headers.Set("Content-Type", "application/json")
 
 	client := httpClient(timeout)
-	url := makeURL(cfg.Collector.CLIProxyURL, "/v1/models", nil)
+	url := makeURL(cfg.ModelRequestURL, "/v1/chat/completions", nil)
 
-	response, payload, err := doJSON(ctx, client, http.MethodGet, url, headers, nil)
+	payload := map[string]any{
+		"model": modelID,
+		"messages": []map[string]string{
+			{"role": "user", "content": "1+1=?"},
+		},
+		"stream":     false,
+		"max_tokens": 10,
+	}
+
+	response, _, err := doJSON(ctx, client, http.MethodPost, url, headers, payload)
 	if err != nil {
 		return false
 	}
 
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return false
+	// 2xx status code means model is available
+	// 429 (rate limit) also means model exists
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		return true
 	}
-
-	var raw any
-	if err := json.Unmarshal(payload, &raw); err != nil {
-		return false
-	}
-
-	items, err := extractAvailableModelItems(raw)
-	if err != nil {
-		return false
-	}
-
-	// Check if model exists in the list
-	for _, item := range items {
-		if text, ok := item.(string); ok {
-			if strings.TrimSpace(text) == modelID {
-				return true
-			}
-		} else if obj, ok := item.(map[string]any); ok {
-			if id := firstStringValue(obj, modelIDKeys); id != nil && *id == modelID {
-				return true
-			}
-		}
+	if response.StatusCode == 429 {
+		return true
 	}
 
 	return false
 }
 
-func (r *ModelCheckRunner) detectChange(lastStatus, currentStatus string, lastKeys, currentKeys []string) string {
+func (r *ModelCheckRunner) detectChange(lastStatus, currentStatus string) string {
 	if lastStatus == "" {
 		if currentStatus == "available" {
 			return "newly_available"
@@ -839,34 +820,12 @@ func (r *ModelCheckRunner) detectChange(lastStatus, currentStatus string, lastKe
 		}
 	}
 
-	// Check if keys changed
-	if currentStatus == "available" && !stringSlicesEqual(lastKeys, currentKeys) {
-		return "keys_changed"
-	}
-
 	return "no_change"
-}
-
-func stringSlicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	aMap := make(map[string]bool)
-	for _, s := range a {
-		aMap[s] = true
-	}
-	for _, s := range b {
-		if !aMap[s] {
-			return false
-		}
-	}
-	return true
 }
 
 
 func (r *ModelCheckRunner) updateModelStatus(ctx context.Context, result checkModelResult) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	availableKeysJSON, _ := json.Marshal(result.AvailableKeys)
 
 	var lastAvailableAt *string
 	if result.Status == "available" {
@@ -876,12 +835,11 @@ func (r *ModelCheckRunner) updateModelStatus(ctx context.Context, result checkMo
 	_, err := r.app.db.ExecContext(ctx, `
 		UPDATE model_checker_tracked_models
 		SET last_status = ?,
-		    last_available_keys = ?,
 		    last_checked_at = ?,
 		    last_available_at = COALESCE(?, last_available_at),
 		    updated_at = datetime('now')
 		WHERE model_id = ?
-	`, result.Status, string(availableKeysJSON), now, lastAvailableAt, result.ModelID)
+	`, result.Status, now, lastAvailableAt, result.ModelID)
 
 	return err
 }

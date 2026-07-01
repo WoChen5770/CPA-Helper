@@ -117,15 +117,6 @@ const columns: DataTableColumns<TrackedModel> = [
     },
   },
   {
-    title: () => t('可用 Key 数', 'Available Keys'),
-    key: 'last_available_keys',
-    width: 120,
-    render: (row) => {
-      const count = row.last_available_keys?.length || 0
-      return `${count}`
-    },
-  },
-  {
     title: () => t('调度表达式', 'Schedule Cron'),
     key: 'schedule_cron',
     width: 140,

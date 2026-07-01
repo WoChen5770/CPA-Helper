@@ -44,6 +44,7 @@ const globalConfig = ref<ModelCheckerConfig>({
   timeout_seconds: 30,
   max_retries: 2,
   alert_on_unavailable: true,
+  test_api_key: '',
 })
 const availableModels = ref<AvailableModel[]>([])
 const selectedModelId = ref('')
@@ -308,6 +309,16 @@ export default { name: 'ModelCheckConfigView' }
       <!-- 全局配置 -->
       <NCard :title="t('全局配置', 'Global Configuration')">
         <NSpace vertical :size="12">
+          <div class="config-item">
+            <label>{{ t('测试 API Key', 'Test API Key') }}</label>
+            <NInput
+              v-model:value="globalConfig.test_api_key"
+              type="password"
+              show-password-on="click"
+              :placeholder="t('用于测试模型可用性的专用 Key', 'Dedicated key for testing model availability')"
+              style="width: 400px"
+            />
+          </div>
           <div class="config-item">
             <label>{{ t('超时时间 (秒)', 'Timeout (seconds)') }}</label>
             <NInputNumber
