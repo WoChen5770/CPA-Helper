@@ -102,6 +102,12 @@ export const router = createRouter({
           meta: { requiresAdmin: true },
         },
         {
+          path: 'admin/model-status',
+          name: 'admin-model-status',
+          component: () => import('@/features/model-checker/views/ModelStatusView.vue'),
+          meta: { requiresAdmin: true },
+        },
+        {
           path: 'admin/pricing',
           name: 'admin-pricing',
           component: () => import('@/features/pricing/views/ModelPricesView.vue'),

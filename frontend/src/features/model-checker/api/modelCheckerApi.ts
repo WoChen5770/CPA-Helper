@@ -3,101 +3,40 @@ import type {
   ModelCheckerStatus,
   TrackedModel,
 } from '@/shared/types/api'
-import { getBasePath } from '@/shared/api/http'
-
-const BASE_URL = `${getBasePath()}/api/model-checker`
+import { apiClient } from '@/shared/api/apiClient'
 
 export async function getModelCheckerSettings(): Promise<ModelCheckerConfig> {
-  const response = await fetch(`${BASE_URL}/settings`, {
-    credentials: 'include',
-  })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: { message: 'Unknown error' } }))
-    throw new Error(error.detail?.message || 'Failed to load settings')
-  }
-  return response.json()
+  return apiClient.get<ModelCheckerConfig>('/model-checker/settings')
 }
 
 export async function updateModelCheckerSettings(
   payload: Partial<ModelCheckerConfig>
 ): Promise<ModelCheckerConfig> {
-  const response = await fetch(`${BASE_URL}/settings`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(payload),
-  })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: { message: 'Unknown error' } }))
-    throw new Error(error.detail?.message || 'Failed to update settings')
-  }
-  return response.json()
+  return apiClient.put<ModelCheckerConfig>('/model-checker/settings', payload)
 }
 
 export async function getModelCheckerStatus(): Promise<ModelCheckerStatus> {
-  const response = await fetch(`${BASE_URL}/status`, {
-    credentials: 'include',
-  })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: { message: 'Unknown error' } }))
-    throw new Error(error.detail?.message || 'Failed to load status')
-  }
-  return response.json()
+  return apiClient.get<ModelCheckerStatus>('/model-checker/status')
 }
 
 export async function runModelCheckerOnce(): Promise<void> {
-  const response = await fetch(`${BASE_URL}/run-once`, {
-    method: 'POST',
-    credentials: 'include',
-  })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: { message: 'Unknown error' } }))
-    throw new Error(error.detail?.message || 'Failed to start check')
-  }
+  return apiClient.post<void>('/model-checker/run-once')
 }
 
 export async function startModelChecker(): Promise<void> {
-  const response = await fetch(`${BASE_URL}/start`, {
-    method: 'POST',
-    credentials: 'include',
-  })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: { message: 'Unknown error' } }))
-    throw new Error(error.detail?.message || 'Failed to start daemon')
-  }
+  return apiClient.post<void>('/model-checker/start')
 }
 
 export async function stopModelChecker(): Promise<void> {
-  const response = await fetch(`${BASE_URL}/stop`, {
-    method: 'POST',
-    credentials: 'include',
-  })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: { message: 'Unknown error' } }))
-    throw new Error(error.detail?.message || 'Failed to stop daemon')
-  }
+  return apiClient.post<void>('/model-checker/stop')
 }
 
 export async function clearModelCheckerLogs(): Promise<void> {
-  const response = await fetch(`${BASE_URL}/logs/clear`, {
-    method: 'POST',
-    credentials: 'include',
-  })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: { message: 'Unknown error' } }))
-    throw new Error(error.detail?.message || 'Failed to clear logs')
-  }
+  return apiClient.post<void>('/model-checker/logs/clear')
 }
 
 export async function getTrackedModels(): Promise<TrackedModel[]> {
-  const response = await fetch(`${BASE_URL}/models`, {
-    credentials: 'include',
-  })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: { message: 'Unknown error' } }))
-    throw new Error(error.detail?.message || 'Failed to load models')
-  }
-  return response.json()
+  return apiClient.get<TrackedModel[]>('/model-checker/models')
 }
 
 export async function addTrackedModel(payload: {
@@ -108,27 +47,11 @@ export async function addTrackedModel(payload: {
   max_retries?: number
   alert_on_unavailable?: boolean
 }): Promise<void> {
-  const response = await fetch(`${BASE_URL}/models`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(payload),
-  })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: { message: 'Unknown error' } }))
-    throw new Error(error.detail?.message || 'Failed to add model')
-  }
+  return apiClient.post<void>('/model-checker/models', payload)
 }
 
 export async function getTrackedModel(modelId: string): Promise<TrackedModel> {
-  const response = await fetch(`${BASE_URL}/models/${encodeURIComponent(modelId)}`, {
-    credentials: 'include',
-  })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: { message: 'Unknown error' } }))
-    throw new Error(error.detail?.message || 'Failed to load model')
-  }
-  return response.json()
+  return apiClient.get<TrackedModel>(`/model-checker/models/${encodeURIComponent(modelId)}`)
 }
 
 export async function updateTrackedModel(
@@ -141,36 +64,13 @@ export async function updateTrackedModel(
     alert_on_unavailable?: boolean
   }
 ): Promise<void> {
-  const response = await fetch(`${BASE_URL}/models/${encodeURIComponent(modelId)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(payload),
-  })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: { message: 'Unknown error' } }))
-    throw new Error(error.detail?.message || 'Failed to update model')
-  }
+  return apiClient.put<void>(`/model-checker/models/${encodeURIComponent(modelId)}`, payload)
 }
 
 export async function deleteTrackedModel(modelId: string): Promise<void> {
-  const response = await fetch(`${BASE_URL}/models/${encodeURIComponent(modelId)}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: { message: 'Unknown error' } }))
-    throw new Error(error.detail?.message || 'Failed to delete model')
-  }
+  return apiClient.delete(`/model-checker/models/${encodeURIComponent(modelId)}`)
 }
 
 export async function checkTrackedModel(modelId: string): Promise<void> {
-  const response = await fetch(`${BASE_URL}/models/${encodeURIComponent(modelId)}/check`, {
-    method: 'POST',
-    credentials: 'include',
-  })
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: { message: 'Unknown error' } }))
-    throw new Error(error.detail?.message || 'Failed to check model')
-  }
+  return apiClient.post<void>(`/model-checker/models/${encodeURIComponent(modelId)}/check`)
 }

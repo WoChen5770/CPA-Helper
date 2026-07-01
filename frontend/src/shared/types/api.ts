@@ -704,5 +704,3 @@ export interface ModelCheckRunModel {
   checked_at: string | null
   created_at: string
 }
-
-}
