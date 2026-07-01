@@ -13,7 +13,7 @@ import (
 )
 
 const generatedAPIKeyPrefix = "sk-"
-const generatedAPIKeyLength = 52
+const generatedAPIKeyLength = 16
 const generatedAPIKeyAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 type userPayload struct {
@@ -30,7 +30,8 @@ type userAPIKeyBindPayload struct {
 }
 
 type apiKeyPayload struct {
-	Description string `json:"description"`
+	Description string  `json:"description"`
+	APIKey      *string `json:"api_key"`
 }
 
 type UserRecord struct {
@@ -282,7 +283,12 @@ func (a *App) handleCurrentUserAPIKeys(w http.ResponseWriter, r *http.Request) e
 		if err := decodeJSON(r, &payload); err != nil {
 			return err
 		}
-		summary, err := a.createGeneratedAPIKeyForUser(r.Context(), user.ID, user.Username, payload.Description)
+		var summary UserApiKeySummary
+		if payload.APIKey != nil && strings.TrimSpace(*payload.APIKey) != "" {
+			summary, err = a.createCustomAPIKeyForUser(r.Context(), user.ID, user.Username, *payload.APIKey, payload.Description)
+		} else {
+			summary, err = a.createGeneratedAPIKeyForUser(r.Context(), user.ID, user.Username, payload.Description)
+		}
 		if err != nil {
 			return err
 		}
@@ -580,6 +586,49 @@ func (a *App) currentUserAPIKeys(ctx context.Context, user *AuthUser) ([]UserApi
 		}
 	}
 	return result, nil
+}
+
+func (a *App) createCustomAPIKeyForUser(ctx context.Context, userID int, username, apiKey, description string) (UserApiKeySummary, error) {
+	apiKey = strings.TrimSpace(apiKey)
+	description = strings.TrimSpace(description)
+	if description == "" {
+		return UserApiKeySummary{}, validationError("API KEY 描述不能为空")
+	}
+	if apiKey == "" {
+		return UserApiKeySummary{}, validationError("API KEY 不能为空")
+	}
+	if len(apiKey) < 10 {
+		return UserApiKeySummary{}, validationError("API KEY 长度不能少于 10 个字符")
+	}
+	user, err := a.getActiveUser(ctx, userID)
+	if err != nil {
+		return UserApiKeySummary{}, err
+	}
+	if err := a.ensureUserQuotaReadyForKeys(ctx, user.ID); err != nil {
+		return UserApiKeySummary{}, err
+	}
+	apiKeyHash := hashAPIKey(apiKey)
+	var existingUserID *int
+	err = a.db.QueryRowContext(ctx, `SELECT user_id FROM user_api_keys WHERE api_key_hash = ?`, apiKeyHash).Scan(&existingUserID)
+	if err != nil && err != sql.ErrNoRows {
+		return UserApiKeySummary{}, err
+	}
+	if existingUserID != nil {
+		return UserApiKeySummary{}, conflictError("该密钥已存在")
+	}
+	if err := a.addRemoteAPIKey(ctx, apiKey); err != nil {
+		return UserApiKeySummary{}, err
+	}
+	if err := a.upsertUserAPIKey(ctx, user.ID, apiKeyHash, apiKey, description); err != nil {
+		_ = a.removeRemoteAPIKeyHash(ctx, apiKeyHash)
+		return UserApiKeySummary{}, err
+	}
+	summary, err := a.keySummaryByHash(ctx, apiKeyHash, &apiKey)
+	if err != nil {
+		return UserApiKeySummary{}, err
+	}
+	summary.UserName = &username
+	return summary, nil
 }
 
 func (a *App) createGeneratedAPIKeyForUser(ctx context.Context, userID int, username, description string) (UserApiKeySummary, error) {

@@ -80,6 +80,7 @@ const isAvailableModelsLoading = ref(false)
 const isRequestTesting = ref(false)
 const editingApiKeyHash = ref<string | null>(null)
 const apiKeyDescription = ref('VSCode')
+const customApiKey = ref('')
 const generatedApiKey = ref<string | null>(null)
 const generatedApiKeyHash = ref<string | null>(null)
 const visibleApiKeyHashes = ref<Set<string>>(new Set())
@@ -511,6 +512,7 @@ function openCreateDialog() {
   }
   editingApiKeyHash.value = null
   apiKeyDescription.value = 'VSCode'
+  customApiKey.value = ''
   generatedApiKey.value = null
   generatedApiKeyHash.value = null
   editorVisible.value = true
@@ -524,6 +526,7 @@ function closeGeneratedApiKey() {
 function editApiKey(row: UserApiKeySummary) {
   editingApiKeyHash.value = row.api_key_hash
   apiKeyDescription.value = row.description || 'VSCode'
+  customApiKey.value = ''
   generatedApiKey.value = null
   generatedApiKeyHash.value = null
   editorVisible.value = true
@@ -565,6 +568,11 @@ async function saveApiKey() {
     message.error(t('API KEY 描述不能为空', 'API key description is required'))
     return
   }
+  const customKey = customApiKey.value.trim()
+  if (customKey && customKey.length < 10) {
+    message.error(t('自定义密钥长度不能少于 10 个字符', 'Custom key must be at least 10 characters'))
+    return
+  }
   isSaving.value = true
   try {
     if (editingApiKeyHash.value) {
@@ -575,7 +583,11 @@ async function saveApiKey() {
         message.error(t('当前账号额度已用尽，API KEY 已暂停', 'This account has exhausted its quota, so API keys are paused'))
         return
       }
-      const created = await createApiKey({ description })
+      const payload: { description: string; api_key?: string } = { description }
+      if (customKey) {
+        payload.api_key = customKey
+      }
+      const created = await createApiKey(payload)
       generatedApiKey.value = created.api_key ?? null
       generatedApiKeyHash.value = created.api_key_hash
       message.success(t('API 密钥已创建并同步到 CPA', 'API key created and synced to CPA'))
@@ -777,6 +789,14 @@ onMounted(refresh)
             v-model:value="apiKeyDescription"
             :disabled="isSaving"
             :placeholder="t('例如：VSCode', 'Example: VSCode')"
+            @keyup.enter="saveApiKey"
+          />
+        </NFormItem>
+        <NFormItem v-if="!editingApiKeyHash" :label="t('自定义密钥（可选）', 'Custom key (optional)')">
+          <NInput
+            v-model:value="customApiKey"
+            :disabled="isSaving"
+            :placeholder="t('留空则自动生成，最少 10 个字符', 'Leave blank to auto-generate, min 10 chars')"
             @keyup.enter="saveApiKey"
           />
         </NFormItem>

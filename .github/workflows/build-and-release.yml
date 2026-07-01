@@ -8,7 +8,7 @@ on:
       - VERSION
 
 env:
-  DOCKERHUB_IMAGE_NAME: walkingd/cpa-helper
+  DOCKERHUB_IMAGE_NAME: jaycq/cpa-helper
   GHCR_REGISTRY: ghcr.io
   IMAGE_BASENAME: cpa-helper
 
