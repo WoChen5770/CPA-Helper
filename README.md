@@ -1,6 +1,6 @@
 <div align="center">
   <img src="frontend/public/logo.png" alt="CPA-Helper Logo" width="104" height="104" />
-  <h1>CPA-Helper</h1>
+  <h1>CPA-Helper (Forked)</h1>
   <p><strong>A local self-hosted multi-user admin panel for CLIProxyAPI</strong></p>
   <p>Usage analytics · Request tracing · User balances · API key management · Model pricing maintenance · Codex auth file inspection</p>
   <p>
@@ -16,6 +16,49 @@
     <a href="https://linux.do"><img src="https://shorturl.at/ggSqS" alt="LINUX DO" /></a>
   </p>
 </div>
+
+---
+
+## 🎯 Fork Enhancements
+
+This fork adds the following features based on the original [CPA-Helper](https://github.com/Yzyy99/CPA-Helper) project:
+
+### ✨ Zero-Config Subpath Deployment
+
+Perfect support for deploying under any subpath (e.g., `/cpa-helper`, `/admin`, etc.) without manual configuration:
+
+- **Automatic base path detection**: Frontend automatically detects the deployment path from the URL
+- **Relative path resolution**: All API requests and static resources use relative paths with HTML `<base>` tag
+- **Dual-mode routing**: Backend supports both `/api/*` and `/{basePath}/api/*` route patterns
+- **Smart path handling**: Universal path parsing logic handles all API endpoints correctly
+- **Dynamic HTML injection**: Backend dynamically injects `<base>` tag based on detected subpath
+
+### 🚀 Deployment Example
+
+```nginx
+# Nginx reverse proxy configuration
+location /cpa-helper/ {
+    proxy_pass http://localhost:18317/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+```
+
+Access: `https://yourdomain.com/cpa-helper` - works out of the box! 🎉
+
+### 📋 Technical Implementation
+
+**Frontend Changes:**
+- Vite config: `base: './'` for relative path builds
+- Router: Automatic base path detection from URL
+- API client: Relative path requests (`api/*` instead of `/api/*`)
+- Assets: All static resources use relative paths
+
+**Backend Changes:**
+- Dual route registration for all API endpoints
+- Universal `splitPath` function for path parsing
+- Dynamic `<base>` tag injection in HTML responses
+- Smart path extraction with `strings.Index`
 
 ---
 
