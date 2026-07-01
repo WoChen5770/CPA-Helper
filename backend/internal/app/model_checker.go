@@ -669,7 +669,9 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 
 	r.logf("开始检查模型: %s", modelID)
 
-	ctx := context.Background()
+	// Create context with timeout to prevent indefinite hangs
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 
 	// Load global config
 	globalCfg, err := r.app.loadModelCheckerConfig(ctx)
