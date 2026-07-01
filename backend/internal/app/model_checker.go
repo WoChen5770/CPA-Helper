@@ -849,14 +849,12 @@ func (r *ModelCheckRunner) checkModelWithTestKeyWithLog(ctx context.Context, cfg
 	}
 
 	// 2xx status code means model is available
-	// 429 (rate limit) also means model exists
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		return true
 	}
-	if response.StatusCode == 429 {
-		return true
-	}
 
+	// 429 (rate limit) means unavailable due to throttling
+	// 502/503/504 (gateway errors) means error
 	return false
 }
 
