@@ -6,6 +6,13 @@ on:
       - main
     paths:
       - VERSION
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force build even if VERSION unchanged'
+        required: false
+        type: boolean
+        default: false
 
 env:
   DOCKERHUB_IMAGE_NAME: jaycq/cpa-helper
@@ -34,6 +41,7 @@ jobs:
         shell: bash
         env:
           BEFORE_SHA: ${{ github.event.before }}
+          FORCE_BUILD: ${{ github.event.inputs.force_build }}
         run: |
           version="$(tr -d '[:space:]' < VERSION)"
           version="${version#v}"
@@ -43,7 +51,10 @@ jobs:
           fi
 
           changed=false
-          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+          if [ "$FORCE_BUILD" = "true" ]; then
+            echo "Force build requested via workflow_dispatch"
+            changed=true
+          elif [ "$GITHUB_REF" = "refs/heads/main" ]; then
             if [ -z "$BEFORE_SHA" ] || [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
               changed=true
             elif ! git cat-file -e "$BEFORE_SHA:VERSION" 2>/dev/null; then
