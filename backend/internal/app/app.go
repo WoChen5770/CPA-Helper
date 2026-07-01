@@ -229,18 +229,17 @@ func frontendDistDir(repoRoot string) (string, bool) {
 }
 
 func (a *App) Routes() http.Handler {
-	cfg, _ := a.loadConfig(context.Background())
-	basePath := ""
-	if cfg.BasePath != "" {
-		basePath = "/" + cfg.BasePath
-	}
-
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET "+basePath+"/api/health", a.wrap(func(w http.ResponseWriter, r *http.Request) error {
+
+	// 健康检查接口 - 支持任意 base path
+	healthHandler := a.wrap(func(w http.ResponseWriter, r *http.Request) error {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return nil
-	}))
-	mux.HandleFunc("GET "+basePath+"/api/ready", a.wrap(func(w http.ResponseWriter, r *http.Request) error {
+	})
+	mux.HandleFunc("GET /api/health", healthHandler)
+	mux.HandleFunc("GET /{basePath}/api/health", healthHandler)
+
+	readyHandler := a.wrap(func(w http.ResponseWriter, r *http.Request) error {
 		report, err := a.Readiness(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
@@ -258,26 +257,66 @@ func (a *App) Routes() http.Handler {
 			"target_version":  report.TargetVersion,
 		})
 		return nil
-	}))
+	})
+	mux.HandleFunc("GET /api/ready", readyHandler)
+	mux.HandleFunc("GET /{basePath}/api/ready", readyHandler)
 
-	mux.HandleFunc(basePath+"/api/auth/", a.wrap(a.handleAuth))
-	mux.HandleFunc(basePath+"/api/settings", a.wrap(a.handleSettings))
-	mux.HandleFunc(basePath+"/api/collector/status", a.wrap(a.handleCollectorStatus))
-	mux.HandleFunc(basePath+"/api/usage/", a.wrap(a.handleUsage))
-	mux.HandleFunc(basePath+"/api/model-prices", a.wrap(a.handleModelPrices))
-	mux.HandleFunc(basePath+"/api/model-prices/", a.wrap(a.handleModelPriceByPath))
-	mux.HandleFunc(basePath+"/api/users", a.wrap(a.handleUsers))
-	mux.HandleFunc(basePath+"/api/users/", a.wrap(a.handleUserByPath))
-	mux.HandleFunc(basePath+"/api/account/quota", a.wrap(a.handleCurrentUserQuota))
-	mux.HandleFunc(basePath+"/api/api-keys", a.wrap(a.handleCurrentUserAPIKeys))
-	mux.HandleFunc(basePath+"/api/api-keys/", a.wrap(a.handleCurrentUserAPIKeyByHash))
-	mux.HandleFunc(basePath+"/api/account/models", a.wrap(a.handleAvailableModels))
-	mux.HandleFunc(basePath+"/api/account/model-request/test", a.wrap(a.handleCurrentModelRequestTest))
-	mux.HandleFunc(basePath+"/api/account/model-request", a.wrap(a.handleCurrentModelRequestGuide))
-	mux.HandleFunc(basePath+"/api/card-shops/favorites", a.wrap(a.handleCardShopFavorites))
-	mux.HandleFunc(basePath+"/api/card-shops/tags", a.wrap(a.handleCardShopTags))
-	mux.HandleFunc(basePath+"/api/card-shops", a.wrap(a.handleCardShops))
-	mux.HandleFunc(basePath+"/api/codex-keeper/", a.wrap(a.handleCodexKeeper))
+	// API 路由 - 支持任意 base path（/api/* 或 /xxx/api/*）
+	mux.HandleFunc("/api/auth/", a.wrap(a.handleAuth))
+	mux.HandleFunc("/{basePath}/api/auth/", a.wrap(a.handleAuth))
+
+	mux.HandleFunc("/api/settings", a.wrap(a.handleSettings))
+	mux.HandleFunc("/{basePath}/api/settings", a.wrap(a.handleSettings))
+
+	mux.HandleFunc("/api/collector/status", a.wrap(a.handleCollectorStatus))
+	mux.HandleFunc("/{basePath}/api/collector/status", a.wrap(a.handleCollectorStatus))
+
+	mux.HandleFunc("/api/usage/", a.wrap(a.handleUsage))
+	mux.HandleFunc("/{basePath}/api/usage/", a.wrap(a.handleUsage))
+
+	mux.HandleFunc("/api/model-prices", a.wrap(a.handleModelPrices))
+	mux.HandleFunc("/{basePath}/api/model-prices", a.wrap(a.handleModelPrices))
+
+	mux.HandleFunc("/api/model-prices/", a.wrap(a.handleModelPriceByPath))
+	mux.HandleFunc("/{basePath}/api/model-prices/", a.wrap(a.handleModelPriceByPath))
+
+	mux.HandleFunc("/api/users", a.wrap(a.handleUsers))
+	mux.HandleFunc("/{basePath}/api/users", a.wrap(a.handleUsers))
+
+	mux.HandleFunc("/api/users/", a.wrap(a.handleUserByPath))
+	mux.HandleFunc("/{basePath}/api/users/", a.wrap(a.handleUserByPath))
+
+	mux.HandleFunc("/api/account/quota", a.wrap(a.handleCurrentUserQuota))
+	mux.HandleFunc("/{basePath}/api/account/quota", a.wrap(a.handleCurrentUserQuota))
+
+	mux.HandleFunc("/api/api-keys", a.wrap(a.handleCurrentUserAPIKeys))
+	mux.HandleFunc("/{basePath}/api/api-keys", a.wrap(a.handleCurrentUserAPIKeys))
+
+	mux.HandleFunc("/api/api-keys/", a.wrap(a.handleCurrentUserAPIKeyByHash))
+	mux.HandleFunc("/{basePath}/api/api-keys/", a.wrap(a.handleCurrentUserAPIKeyByHash))
+
+	mux.HandleFunc("/api/account/models", a.wrap(a.handleAvailableModels))
+	mux.HandleFunc("/{basePath}/api/account/models", a.wrap(a.handleAvailableModels))
+
+	mux.HandleFunc("/api/account/model-request/test", a.wrap(a.handleCurrentModelRequestTest))
+	mux.HandleFunc("/{basePath}/api/account/model-request/test", a.wrap(a.handleCurrentModelRequestTest))
+
+	mux.HandleFunc("/api/account/model-request", a.wrap(a.handleCurrentModelRequestGuide))
+	mux.HandleFunc("/{basePath}/api/account/model-request", a.wrap(a.handleCurrentModelRequestGuide))
+
+	mux.HandleFunc("/api/card-shops/favorites", a.wrap(a.handleCardShopFavorites))
+	mux.HandleFunc("/{basePath}/api/card-shops/favorites", a.wrap(a.handleCardShopFavorites))
+
+	mux.HandleFunc("/api/card-shops/tags", a.wrap(a.handleCardShopTags))
+	mux.HandleFunc("/{basePath}/api/card-shops/tags", a.wrap(a.handleCardShopTags))
+
+	mux.HandleFunc("/api/card-shops", a.wrap(a.handleCardShops))
+	mux.HandleFunc("/{basePath}/api/card-shops", a.wrap(a.handleCardShops))
+
+	mux.HandleFunc("/api/codex-keeper/", a.wrap(a.handleCodexKeeper))
+	mux.HandleFunc("/{basePath}/api/codex-keeper/", a.wrap(a.handleCodexKeeper))
+
+	// SPA 和静态资源 - 捕获所有其他请求
 	mux.HandleFunc("/", a.wrap(a.handleSPA))
 	return withCORS(mux)
 }
@@ -369,56 +408,88 @@ func requireMethod(r *http.Request, methods ...string) error {
 }
 
 func (a *App) handleSPA(w http.ResponseWriter, r *http.Request) error {
-	cfg, _ := a.loadConfig(r.Context())
-	basePath := ""
-	if cfg.BasePath != "" {
-		basePath = "/" + cfg.BasePath
-	}
-
-	// 检查是否是 API 路径
-	if strings.HasPrefix(r.URL.Path, basePath+"/api/") {
+	// 检查是否是 API 路径（不应该到达这里，但作为保险）
+	if strings.Contains(r.URL.Path, "/api/") {
 		return notFoundError("Not Found")
 	}
 
-	// 如果设置了 basePath，需要处理路径重写
-	requestPath := r.URL.Path
-	if basePath != "" && strings.HasPrefix(requestPath, basePath+"/") {
-		// 去掉 basePath 前缀，用于文件查找
-		requestPath = strings.TrimPrefix(requestPath, basePath)
-	} else if basePath != "" && requestPath == basePath {
-		// 访问 basePath 本身，重定向到 basePath/
+	// 提取 base path（如果有）
+	// 例如：/cpa-helper/admin/usage -> basePath = /cpa-helper, requestPath = /admin/usage
+	//      /login -> basePath = "", requestPath = /login
+	basePath, requestPath := extractBasePath(r.URL.Path)
+
+	// 如果访问的是 basePath 本身（没有尾部斜杠），重定向到带斜杠的版本
+	// 例如：/cpa-helper -> /cpa-helper/
+	if basePath != "" && requestPath == "" {
 		http.Redirect(w, r, basePath+"/", http.StatusMovedPermanently)
 		return nil
-	} else if basePath != "" {
-		// 访问其他路径但设置了 basePath，返回 404
-		return notFoundError("Not Found")
 	}
 
 	if a.frontendEnv {
-		served, err := a.serveExternalSPAWithPath(w, r, requestPath)
+		served, err := a.serveExternalSPAWithPath(w, r, requestPath, basePath)
 		if err != nil || served {
 			return err
 		}
 		return a.serveFrontendNotBuilt(w)
 	}
 	if a.frontendFS != nil {
-		served, err := a.serveEmbeddedSPAWithPath(w, r, requestPath)
+		served, err := a.serveEmbeddedSPAWithPath(w, r, requestPath, basePath)
 		if err != nil || served {
 			return err
 		}
 	}
-	served, err := a.serveExternalSPAWithPath(w, r, requestPath)
+	served, err := a.serveExternalSPAWithPath(w, r, requestPath, basePath)
 	if err != nil || served {
 		return err
 	}
 	return a.serveFrontendNotBuilt(w)
 }
 
-func (a *App) serveExternalSPA(w http.ResponseWriter, r *http.Request) (bool, error) {
-	return a.serveExternalSPAWithPath(w, r, r.URL.Path)
+// extractBasePath 从请求路径中提取 base path
+// 例如：/cpa-helper/login -> (/cpa-helper, /login)
+//      /login -> ("", /login)
+//      /some-path/admin/usage -> (/some-path, /admin/usage)
+func extractBasePath(fullPath string) (basePath string, requestPath string) {
+	// 已知的应用路由（这些不是 base path）
+	knownRoutes := []string{"/login", "/change-credentials", "/admin", "/account", "/usage", "/records", "/keys", "/pricing", "/settings", "/users"}
+
+	// 检查是否直接匹配已知路由
+	for _, route := range knownRoutes {
+		if strings.HasPrefix(fullPath, route) {
+			return "", fullPath
+		}
+	}
+
+	// 尝试提取第一段作为 base path
+	parts := strings.SplitN(strings.TrimPrefix(fullPath, "/"), "/", 2)
+	if len(parts) >= 1 && parts[0] != "" {
+		// 检查第二部分是否是已知路由
+		if len(parts) == 2 {
+			secondPart := "/" + parts[1]
+			for _, route := range knownRoutes {
+				if strings.HasPrefix(secondPart, route) {
+					return "/" + parts[0], secondPart
+				}
+			}
+			// 如果第二部分为空或是 assets 等静态资源目录
+			if parts[1] == "" || strings.HasPrefix(parts[1], "assets/") || strings.HasPrefix(parts[1], "logo.png") {
+				return "/" + parts[0], "/" + parts[1]
+			}
+		} else if len(parts) == 1 {
+			// 只有一段路径，可能是 /cpa-helper 这种情况
+			// 返回这个路径作为 basePath，requestPath 为空
+			return "/" + parts[0], ""
+		}
+	}
+
+	return "", fullPath
 }
 
-func (a *App) serveExternalSPAWithPath(w http.ResponseWriter, r *http.Request, requestPath string) (bool, error) {
+func (a *App) serveExternalSPA(w http.ResponseWriter, r *http.Request) (bool, error) {
+	return a.serveExternalSPAWithPath(w, r, r.URL.Path, "")
+}
+
+func (a *App) serveExternalSPAWithPath(w http.ResponseWriter, r *http.Request, requestPath string, basePath string) (bool, error) {
 	requested := cleanSPAPath(requestPath)
 	if requested != "" {
 		staticPath := filepath.Join(a.frontendDist, filepath.FromSlash(requested))
@@ -431,17 +502,16 @@ func (a *App) serveExternalSPAWithPath(w http.ResponseWriter, r *http.Request, r
 	}
 	indexPath := filepath.Join(a.frontendDist, "index.html")
 	if _, err := os.Stat(indexPath); err == nil {
-		http.ServeFile(w, r, indexPath)
-		return true, nil
+		return true, a.serveIndexHTMLFileWithBase(w, r, indexPath, basePath)
 	}
 	return false, nil
 }
 
 func (a *App) serveEmbeddedSPA(w http.ResponseWriter, r *http.Request) (bool, error) {
-	return a.serveEmbeddedSPAWithPath(w, r, r.URL.Path)
+	return a.serveEmbeddedSPAWithPath(w, r, r.URL.Path, "")
 }
 
-func (a *App) serveEmbeddedSPAWithPath(w http.ResponseWriter, r *http.Request, requestPath string) (bool, error) {
+func (a *App) serveEmbeddedSPAWithPath(w http.ResponseWriter, r *http.Request, requestPath string, basePath string) (bool, error) {
 	requested := cleanSPAPath(requestPath)
 	if requested != "" && fs.ValidPath(requested) {
 		if info, err := fs.Stat(a.frontendFS, requested); err == nil && !info.IsDir() {
@@ -449,7 +519,7 @@ func (a *App) serveEmbeddedSPAWithPath(w http.ResponseWriter, r *http.Request, r
 		}
 	}
 	if _, err := fs.Stat(a.frontendFS, "index.html"); err == nil {
-		return true, serveFSFile(w, r, a.frontendFS, "index.html")
+		return true, a.serveFSIndexHTMLWithBase(w, r, a.frontendFS, basePath)
 	}
 	return false, nil
 }
@@ -472,6 +542,38 @@ func serveFSFile(w http.ResponseWriter, r *http.Request, filesystem fs.FS, name 
 		return err
 	}
 	http.ServeContent(w, r, slashpath.Base(name), info.ModTime(), bytes.NewReader(data))
+	return nil
+}
+
+func (a *App) serveIndexHTMLFileWithBase(w http.ResponseWriter, r *http.Request, indexPath string, basePath string) error {
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		return err
+	}
+	html := string(data)
+	if basePath != "" {
+		// 在 <head> 标签后注入 <base> 标签
+		baseTag := fmt.Sprintf(`<base href="%s/">`, basePath)
+		html = strings.Replace(html, "<head>", "<head>\n    "+baseTag, 1)
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
+	return nil
+}
+
+func (a *App) serveFSIndexHTMLWithBase(w http.ResponseWriter, r *http.Request, filesystem fs.FS, basePath string) error {
+	data, err := fs.ReadFile(filesystem, "index.html")
+	if err != nil {
+		return err
+	}
+	html := string(data)
+	if basePath != "" {
+		// 在 <head> 标签后注入 <base> 标签
+		baseTag := fmt.Sprintf(`<base href="%s/">`, basePath)
+		html = strings.Replace(html, "<head>", "<head>\n    "+baseTag, 1)
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
 	return nil
 }
 

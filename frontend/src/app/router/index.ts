@@ -13,8 +13,30 @@ function stringMeta(to: { meta: Record<string, unknown> }, key: string): string 
   return typeof value === 'string' ? value : null
 }
 
+/**
+ * 从当前 URL 自动检测 base path
+ * 例如：
+ * - https://domain.com/ → base = ''
+ * - https://domain.com/cpa-helper/login → base = '/cpa-helper'
+ * - https://domain.com/some-path/ → base = '/some-path'
+ */
+function detectBasePath(): string {
+  const path = window.location.pathname
+  // 匹配第一段路径（不包括根路径）
+  const match = path.match(/^\/([^\/]+)/)
+  if (match && match[1]) {
+    const firstSegment = match[1]
+    // 排除已知的根路由路径（这些是应用路由，不是 base path）
+    const rootRoutes = ['login', 'change-credentials', 'admin', 'account', 'usage', 'records', 'keys', 'pricing', 'settings', 'users']
+    if (!rootRoutes.includes(firstSegment)) {
+      return `/${firstSegment}`
+    }
+  }
+  return ''
+}
+
 export const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(detectBasePath()),
   routes: [
     {
       path: '/login',
