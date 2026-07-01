@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -675,6 +676,10 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 		r.mu.Unlock()
 	}()
 
+	// Random delay between 1-10 seconds to avoid fixed intervals
+	delay := time.Duration(1+rand.Intn(10)) * time.Second
+	time.Sleep(delay)
+
 	r.logf("开始检查模型: %s", modelID)
 
 	// Create context with timeout to prevent indefinite hangs
@@ -807,17 +812,17 @@ func (r *ModelCheckRunner) checkModelWithTestKey(ctx context.Context, cfg AppCon
 			if choice, ok := choices[0].(map[string]any); ok {
 				if message, ok := choice["message"].(map[string]any); ok {
 					if content, ok := message["content"].(string); ok {
-						r.logf("响应状态: %d, 回复内容: %s", response.StatusCode, content)
+						r.logf("模型: %s, 响应状态: %d, 回复内容: %s", modelID, response.StatusCode, content)
 					} else {
-						r.logf("响应状态: %d", response.StatusCode)
+						r.logf("模型: %s, 响应状态: %d", modelID, response.StatusCode)
 					}
 				} else {
-					r.logf("响应状态: %d", response.StatusCode)
+					r.logf("模型: %s, 响应状态: %d", modelID, response.StatusCode)
 				}
 			}
 		}
 	} else {
-		r.logf("响应状态: %d", response.StatusCode)
+		r.logf("模型: %s, 响应状态: %d", modelID, response.StatusCode)
 	}
 
 	// 2xx status code means model is available
