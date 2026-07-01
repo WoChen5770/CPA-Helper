@@ -780,7 +780,7 @@ func (r *ModelCheckRunner) checkModelWithTestKey(ctx context.Context, cfg AppCon
 	payload := map[string]any{
 		"model": modelID,
 		"messages": []map[string]string{
-			{"role": "user", "content": "1+1=?"},
+			{"role": "user", "content": "你想一个数字，然后乘以3再减去3，直接给我结果"},
 		},
 		"stream":     false,
 		"max_tokens": 10,

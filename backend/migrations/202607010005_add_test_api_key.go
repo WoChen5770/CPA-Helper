@@ -3,10 +3,12 @@ package migrations
 import (
 	"context"
 	"database/sql"
+
+	"github.com/pressly/goose/v3"
 )
 
 func init() {
-	register(202607010005, upAddTestAPIKey, downAddTestAPIKey)
+	goose.AddMigrationNoTxContext(upAddTestAPIKey, downAddTestAPIKey)
 }
 
 func upAddTestAPIKey(ctx context.Context, db *sql.DB) error {
