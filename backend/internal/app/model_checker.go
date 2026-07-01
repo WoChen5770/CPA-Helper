@@ -680,7 +680,8 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 	delay := time.Duration(1+rand.Intn(10)) * time.Second
 	time.Sleep(delay)
 
-	r.logf("开始检查模型: %s", modelID)
+	// Record check start time
+	checkStartTime := time.Now().UTC()
 
 	// Create context with timeout to prevent indefinite hangs
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -720,13 +721,42 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 		return
 	}
 
-	// Perform check
-	result := r.checkSingleModel(ctx, model, globalCfg)
+	// Perform check and collect log info
+	var requestURL string
+	var statusCode int
+	var content string
+	var finalStatus string
 
-	// Update model status
-	r.updateModelStatus(ctx, result)
+	// Get app config for URL
+	cfg, err := r.app.loadConfig(ctx)
+	if err == nil {
+		requestURL = makeURL(cfg.ModelRequestURL, "/v1/chat/completions", nil)
+	}
 
-	r.logf("完成检查模型: %s - 状态: %s", modelID, result.Status)
+	result := r.checkSingleModelWithLog(ctx, model, globalCfg, &statusCode, &content)
+	finalStatus = result.Status
+
+	// Update model status with check start time
+	r.updateModelStatusWithCheckTime(ctx, result, checkStartTime)
+
+	// Log everything in one line
+	statusText := finalStatus
+	if finalStatus == "available" {
+		statusText = "正常"
+	} else if finalStatus == "unavailable" {
+		statusText = "异常"
+	} else {
+		statusText = "错误"
+	}
+
+	timestamp := checkStartTime.Format("2006-01-02 15:04:05")
+	if content != "" {
+		r.logf("[%s] 开始巡检模型: %s, 请求 URL: %s, 响应状态: %d, 回复内容: %s, 完成巡检, 状态: %s",
+			timestamp, modelID, requestURL, statusCode, content, statusText)
+	} else {
+		r.logf("[%s] 开始巡检模型: %s, 请求 URL: %s, 响应状态: %d, 完成巡检, 状态: %s",
+			timestamp, modelID, requestURL, statusCode, statusText)
+	}
 }
 
 
@@ -738,7 +768,7 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 
 
 
-func (r *ModelCheckRunner) checkSingleModel(ctx context.Context, model trackedModel, globalCfg ModelCheckerConfig) checkModelResult {
+func (r *ModelCheckRunner) checkSingleModelWithLog(ctx context.Context, model trackedModel, globalCfg ModelCheckerConfig, statusCode *int, content *string) checkModelResult {
 	result := checkModelResult{
 		ModelID:    model.ModelID,
 		Provider:   model.Provider,
@@ -763,7 +793,7 @@ func (r *ModelCheckRunner) checkSingleModel(ctx context.Context, model trackedMo
 	// Check model availability with test key
 	timeout := time.Duration(globalCfg.TimeoutSeconds) * time.Second
 
-	available := r.checkModelWithTestKey(ctx, cfg, globalCfg.TestAPIKey, model.ModelID, timeout)
+	available := r.checkModelWithTestKeyWithLog(ctx, cfg, globalCfg.TestAPIKey, model.ModelID, timeout, statusCode, content)
 
 	if available {
 		result.Status = "available"
@@ -780,13 +810,12 @@ func (r *ModelCheckRunner) checkSingleModel(ctx context.Context, model trackedMo
 	return result
 }
 
-func (r *ModelCheckRunner) checkModelWithTestKey(ctx context.Context, cfg AppConfig, testKey, modelID string, timeout time.Duration) bool {
+func (r *ModelCheckRunner) checkModelWithTestKeyWithLog(ctx context.Context, cfg AppConfig, testKey, modelID string, timeout time.Duration, statusCode *int, content *string) bool {
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+testKey)
 	headers.Set("Content-Type", "application/json")
 
 	client := httpClient(timeout)
-	url := makeURL(cfg.ModelRequestURL, "/v1/chat/completions", nil)
 
 	payload := map[string]any{
 		"model": modelID,
@@ -797,32 +826,26 @@ func (r *ModelCheckRunner) checkModelWithTestKey(ctx context.Context, cfg AppCon
 		"max_tokens": 10,
 	}
 
-	r.logf("请求 URL: %s, 模型: %s", url, modelID)
-
-	response, body, err := doJSON(ctx, client, http.MethodPost, url, headers, payload)
+	response, body, err := doJSON(ctx, client, http.MethodPost, makeURL(cfg.ModelRequestURL, "/v1/chat/completions", nil), headers, payload)
 	if err != nil {
-		r.logf("请求失败: %v", err)
+		*statusCode = 0
 		return false
 	}
 
-	// Extract and log only the content field
+	*statusCode = response.StatusCode
+
+	// Extract content field
 	var respData map[string]any
 	if err := json.Unmarshal(body, &respData); err == nil {
 		if choices, ok := respData["choices"].([]any); ok && len(choices) > 0 {
 			if choice, ok := choices[0].(map[string]any); ok {
 				if message, ok := choice["message"].(map[string]any); ok {
-					if content, ok := message["content"].(string); ok {
-						r.logf("模型: %s, 响应状态: %d, 回复内容: %s", modelID, response.StatusCode, content)
-					} else {
-						r.logf("模型: %s, 响应状态: %d", modelID, response.StatusCode)
+					if c, ok := message["content"].(string); ok {
+						*content = c
 					}
-				} else {
-					r.logf("模型: %s, 响应状态: %d", modelID, response.StatusCode)
 				}
 			}
 		}
-	} else {
-		r.logf("模型: %s, 响应状态: %d", modelID, response.StatusCode)
 	}
 
 	// 2xx status code means model is available
@@ -857,9 +880,9 @@ func (r *ModelCheckRunner) detectChange(lastStatus, currentStatus string) string
 	return "no_change"
 }
 
-
-func (r *ModelCheckRunner) updateModelStatus(ctx context.Context, result checkModelResult) error {
+func (r *ModelCheckRunner) updateModelStatusWithCheckTime(ctx context.Context, result checkModelResult, checkStartTime time.Time) error {
 	now := time.Now().UTC().Format(time.RFC3339)
+	checkTime := checkStartTime.Format(time.RFC3339)
 
 	var lastAvailableAt *string
 	if result.Status == "available" {
@@ -873,7 +896,7 @@ func (r *ModelCheckRunner) updateModelStatus(ctx context.Context, result checkMo
 		    last_available_at = COALESCE(?, last_available_at),
 		    updated_at = datetime('now')
 		WHERE model_id = ?
-	`, result.Status, now, lastAvailableAt, result.ModelID)
+	`, result.Status, checkTime, lastAvailableAt, result.ModelID)
 
 	return err
 }
