@@ -1182,7 +1182,13 @@ func parseIntPath(value string) (int, error) {
 }
 
 func splitPath(path, prefix string) []string {
-	trimmed := strings.Trim(strings.TrimPrefix(path, prefix), "/")
+	// 支持带 base path 的路径
+	// 例如：/cpa-helper/api/codex-keeper/settings -> settings
+	//      /api/codex-keeper/settings -> settings
+	if idx := strings.Index(path, prefix); idx >= 0 {
+		path = path[idx+len(prefix):]
+	}
+	trimmed := strings.Trim(path, "/")
 	if trimmed == "" {
 		return nil
 	}
