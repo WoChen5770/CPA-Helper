@@ -150,8 +150,7 @@ const accountInspectionMenuItems = computed<MenuOption[]>(() => [
 ])
 
 const modelInspectionMenuItems = computed<MenuOption[]>(() => [
-  { label: t('巡检配置', 'Inspection Config'), key: '/admin/model-checker', icon: renderIcon(Cpu) },
-  { label: t('模型状态', 'Model Status'), key: '/admin/model-status', icon: renderIcon(Monitor) },
+  { label: t('模型巡检', 'Model Inspection'), key: '/admin/model-checker', icon: renderIcon(Cpu) },
 ])
 
 const accountMenuItems = computed<MenuOption[]>(() => [

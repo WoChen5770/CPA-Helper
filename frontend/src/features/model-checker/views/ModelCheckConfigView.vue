@@ -10,6 +10,7 @@ import {
   NInputNumber,
   NSelect,
   NTag,
+  NStatistic,
   useMessage,
   useDialog
 } from 'naive-ui'
@@ -40,6 +41,12 @@ const statusLoading = ref(false)
 const daemonRunning = ref(false)
 const logs = ref<string[]>([])
 const trackedModels = ref<TrackedModel[]>([])
+const stats = ref({
+  total: 0,
+  available: 0,
+  unavailable: 0,
+  error: 0,
+})
 const globalConfig = ref<ModelCheckerConfig>({
   timeout_seconds: 30,
   test_api_key: '',
@@ -78,6 +85,14 @@ const loadTrackedModels = async () => {
   loading.value = true
   try {
     trackedModels.value = await getTrackedModels()
+
+    // Calculate stats
+    stats.value = {
+      total: trackedModels.value.length,
+      available: trackedModels.value.filter(m => m.last_status === 'available').length,
+      unavailable: trackedModels.value.filter(m => m.last_status === 'unavailable').length,
+      error: trackedModels.value.filter(m => m.last_status === 'error').length,
+    }
   } catch (error: any) {
     message.error(error.message || t('加载失败', 'Failed to load'))
   } finally {
@@ -202,6 +217,41 @@ const getLogClass = (log: string) => {
   return ''
 }
 
+const getStatusType = (status: string | null) => {
+  switch (status) {
+    case 'available':
+      return 'success'
+    case 'unavailable':
+      return 'error'
+    case 'error':
+      return 'warning'
+    default:
+      return 'default'
+  }
+}
+
+const getStatusText = (status: string | null) => {
+  switch (status) {
+    case 'available':
+      return t('正常', 'Available')
+    case 'unavailable':
+      return t('异常', 'Unavailable')
+    case 'error':
+      return t('错误', 'Error')
+    default:
+      return status || t('未知', 'Unknown')
+  }
+}
+
+const formatTime = (time: string | null) => {
+  if (!time) return t('从未', 'Never')
+  try {
+    return new Date(time).toLocaleString()
+  } catch {
+    return t('无效', 'Invalid')
+  }
+}
+
 const availableModelOptions = computed(() => {
   const trackedIds = new Set(trackedModels.value.map(m => m.model_id))
   return availableModels.value
@@ -216,7 +266,7 @@ const columns: DataTableColumns<TrackedModel> = [
   {
     title: () => t('模型 ID', 'Model ID'),
     key: 'model_id',
-    width: 250,
+    width: 280,
     ellipsis: {
       tooltip: true,
     },
@@ -225,6 +275,19 @@ const columns: DataTableColumns<TrackedModel> = [
     title: () => t('Provider', 'Provider'),
     key: 'provider',
     width: 120,
+  },
+  {
+    title: () => t('状态', 'Status'),
+    key: 'last_status',
+    width: 100,
+    render: (row) => {
+      return h(NTag, {
+        type: getStatusType(row.last_status),
+        size: 'small',
+      }, {
+        default: () => getStatusText(row.last_status),
+      })
+    },
   },
   {
     title: () => t('启用', 'Enabled'),
@@ -243,7 +306,7 @@ const columns: DataTableColumns<TrackedModel> = [
   {
     title: () => t('Cron 表达式', 'Schedule Cron'),
     key: 'schedule_cron',
-    width: 150,
+    width: 140,
     render: (row) => {
       return h(NInput, {
         value: row.schedule_cron,
@@ -254,6 +317,24 @@ const columns: DataTableColumns<TrackedModel> = [
         onBlur: () => handleUpdateModel(row),
       })
     },
+  },
+  {
+    title: () => t('最后可用时间', 'Last Available'),
+    key: 'last_available_at',
+    width: 180,
+    render: (row) => formatTime(row.last_available_at),
+  },
+  {
+    title: () => t('最后巡检时间', 'Last Checked'),
+    key: 'last_checked_at',
+    width: 180,
+    render: (row) => formatTime(row.last_checked_at),
+  },
+  {
+    title: () => t('下次巡检时间', 'Next Run'),
+    key: 'next_run_at',
+    width: 180,
+    render: (row) => formatTime(row.next_run_at),
   },
   {
     title: () => t('操作', 'Actions'),
@@ -281,6 +362,36 @@ export default { name: 'ModelCheckConfigView' }
 <template>
   <div class="model-check-config-view">
     <NSpace vertical :size="16">
+      <!-- 概览 -->
+      <NCard :title="t('概览', 'Overview')">
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px">
+          <NCard :bordered="false">
+            <NStatistic
+              :label="t('总监控模型', 'Total Models')"
+              :value="stats.total"
+            />
+          </NCard>
+          <NCard :bordered="false" style="background: #f0f9ff">
+            <NStatistic
+              :label="t('正常模型', 'Available Models')"
+              :value="stats.available"
+            />
+          </NCard>
+          <NCard :bordered="false" style="background: #fef2f2">
+            <NStatistic
+              :label="t('异常模型', 'Unavailable Models')"
+              :value="stats.unavailable"
+            />
+          </NCard>
+          <NCard :bordered="false" style="background: #fffbeb">
+            <NStatistic
+              :label="t('错误模型', 'Error Models')"
+              :value="stats.error"
+            />
+          </NCard>
+        </div>
+      </NCard>
+
       <!-- 全局配置 -->
       <NCard :title="t('全局配置', 'Global Configuration')">
         <NSpace vertical :size="12">
@@ -308,31 +419,33 @@ export default { name: 'ModelCheckConfigView' }
         </NSpace>
       </NCard>
 
-      <!-- 添加模型 -->
-      <NCard :title="t('添加监控模型', 'Add Model to Monitoring')">
-        <NSpace>
-          <NSelect
-            v-model:value="selectedModelId"
-            :options="availableModelOptions"
-            :placeholder="t('选择模型', 'Select model')"
-            filterable
-            style="width: 400px"
-          />
-          <NButton type="primary" @click="handleAddModel">
-            {{ t('添加', 'Add') }}
-          </NButton>
-        </NSpace>
-      </NCard>
-
-      <!-- 监控模型列表 -->
+      <!-- 监控模型 -->
       <NCard :title="t('监控模型', 'Monitored Models')">
-        <NDataTable
-          :columns="columns"
-          :data="trackedModels"
-          :loading="loading"
-          :pagination="false"
-          :row-key="(row: TrackedModel) => row.model_id"
-        />
+        <NSpace vertical :size="16">
+          <NDataTable
+            :columns="columns"
+            :data="trackedModels"
+            :loading="loading"
+            :pagination="false"
+          />
+
+          <!-- 添加模型表单 -->
+          <div style="padding-top: 16px; border-top: 1px solid #e0e0e0">
+            <NSpace align="center">
+              <span style="font-weight: 500">{{ t('添加模型', 'Add Model') }}:</span>
+              <NSelect
+                v-model:value="selectedModelId"
+                :options="availableModelOptions"
+                :placeholder="t('选择模型', 'Select model')"
+                filterable
+                style="width: 400px"
+              />
+              <NButton type="primary" @click="handleAddModel">
+                {{ t('添加', 'Add') }}
+              </NButton>
+            </NSpace>
+          </div>
+        </NSpace>
       </NCard>
 
       <!-- 日志 -->
