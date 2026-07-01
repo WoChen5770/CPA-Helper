@@ -302,6 +302,10 @@ func (a *App) handleModelChecker(w http.ResponseWriter, r *http.Request) error {
 			if err != nil {
 				return err
 			}
+			// Mask the test API key for security
+			if cfg.TestAPIKey != "" {
+				cfg.TestAPIKey = maskSecret(&cfg.TestAPIKey)
+			}
 			writeJSON(w, http.StatusOK, cfg)
 			return nil
 		}
@@ -587,10 +591,10 @@ func (a *App) stopModelSchedule(w http.ResponseWriter, r *http.Request, modelID 
 // StartModelSchedule starts the cron schedule for a specific model
 func (r *ModelCheckRunner) StartModelSchedule(ctx context.Context, modelID string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	// Check if already scheduled
 	if _, exists := r.cronEntries[modelID]; exists {
+		r.mu.Unlock()
 		return fmt.Errorf("模型 %s 的调度已在运行", modelID)
 	}
 
@@ -603,11 +607,13 @@ func (r *ModelCheckRunner) StartModelSchedule(ctx context.Context, modelID strin
 		WHERE model_id = ?
 	`, modelID).Scan(&model.ModelID, &model.Provider, &enabledInt, &model.ScheduleCron)
 	if err != nil {
+		r.mu.Unlock()
 		return fmt.Errorf("加载模型配置失败: %w", err)
 	}
 	model.Enabled = enabledInt == 1
 
 	if !model.Enabled {
+		r.mu.Unlock()
 		return fmt.Errorf("模型 %s 未启用", modelID)
 	}
 
@@ -616,13 +622,17 @@ func (r *ModelCheckRunner) StartModelSchedule(ctx context.Context, modelID strin
 		r.CheckSingleModel(modelID)
 	})
 	if err != nil {
+		r.mu.Unlock()
 		return fmt.Errorf("添加 Cron 任务失败: %w", err)
 	}
 
 	r.cronEntries[modelID] = entryID
+	shouldStart := len(r.cronEntries) == 1
 
-	// Start cron if not already running
-	if len(r.cronEntries) == 1 {
+	r.mu.Unlock()
+
+	// Start cron AFTER releasing lock to avoid deadlock
+	if shouldStart {
 		r.cron.Start()
 	}
 
@@ -633,18 +643,22 @@ func (r *ModelCheckRunner) StartModelSchedule(ctx context.Context, modelID strin
 // StopModelSchedule stops the cron schedule for a specific model
 func (r *ModelCheckRunner) StopModelSchedule(modelID string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	entryID, exists := r.cronEntries[modelID]
 	if !exists {
+		r.mu.Unlock()
 		return
 	}
 
 	r.cron.Remove(entryID)
 	delete(r.cronEntries, modelID)
 
-	// Stop cron if no more entries
-	if len(r.cronEntries) == 0 {
+	shouldStop := len(r.cronEntries) == 0
+
+	r.mu.Unlock()
+
+	// Stop cron AFTER releasing lock to avoid deadlock
+	if shouldStop {
 		r.cron.Stop()
 	}
 
@@ -791,9 +805,32 @@ func (r *ModelCheckRunner) checkModelWithTestKey(ctx context.Context, cfg AppCon
 		"max_tokens": 10,
 	}
 
-	response, _, err := doJSON(ctx, client, http.MethodPost, url, headers, payload)
+	r.logf("请求 URL: %s, 模型: %s", url, modelID)
+
+	response, body, err := doJSON(ctx, client, http.MethodPost, url, headers, payload)
 	if err != nil {
+		r.logf("请求失败: %v", err)
 		return false
+	}
+
+	// Extract and log only the content field
+	var respData map[string]any
+	if err := json.Unmarshal(body, &respData); err == nil {
+		if choices, ok := respData["choices"].([]any); ok && len(choices) > 0 {
+			if choice, ok := choices[0].(map[string]any); ok {
+				if message, ok := choice["message"].(map[string]any); ok {
+					if content, ok := message["content"].(string); ok {
+						r.logf("响应状态: %d, 回复内容: %s", response.StatusCode, content)
+					} else {
+						r.logf("响应状态: %d", response.StatusCode)
+					}
+				} else {
+					r.logf("响应状态: %d", response.StatusCode)
+				}
+			}
+		}
+	} else {
+		r.logf("响应状态: %d", response.StatusCode)
 	}
 
 	// 2xx status code means model is available
