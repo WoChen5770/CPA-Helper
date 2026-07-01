@@ -122,45 +122,48 @@ func newModelCheckRunner(app *App) *ModelCheckRunner {
 
 // LoadAndStartSchedules loads all enabled models and starts their schedules
 func (r *ModelCheckRunner) LoadAndStartSchedules(ctx context.Context) {
-	rows, err := r.app.db.QueryContext(ctx, `
-		SELECT model_id, schedule_cron
-		FROM model_checker_tracked_models
-		WHERE enabled = 1
-	`)
-	if err != nil {
-		slog.Error("Failed to load enabled models for auto-start", "error", err)
-		return
-	}
-	defer rows.Close()
-
-	var modelsToStart []struct {
-		ModelID      string
-		ScheduleCron string
-	}
-
-	for rows.Next() {
-		var modelID, scheduleCron string
-		if err := rows.Scan(&modelID, &scheduleCron); err != nil {
-			slog.Error("Failed to scan model row", "error", err)
-			continue
+	// Run asynchronously to avoid blocking application startup
+	go func() {
+		rows, err := r.app.db.QueryContext(ctx, `
+			SELECT model_id, schedule_cron
+			FROM model_checker_tracked_models
+			WHERE enabled = 1
+		`)
+		if err != nil {
+			slog.Error("Failed to load enabled models for auto-start", "error", err)
+			return
 		}
-		modelsToStart = append(modelsToStart, struct {
+		defer rows.Close()
+
+		var modelsToStart []struct {
 			ModelID      string
 			ScheduleCron string
-		}{modelID, scheduleCron})
-	}
-
-	if len(modelsToStart) == 0 {
-		return
-	}
-
-	r.logf("自动启动 %d 个已启用模型的调度", len(modelsToStart))
-
-	for _, m := range modelsToStart {
-		if err := r.StartModelSchedule(ctx, m.ModelID); err != nil {
-			slog.Warn("Failed to auto-start schedule for model", "model_id", m.ModelID, "error", err)
 		}
-	}
+
+		for rows.Next() {
+			var modelID, scheduleCron string
+			if err := rows.Scan(&modelID, &scheduleCron); err != nil {
+				slog.Error("Failed to scan model row", "error", err)
+				continue
+			}
+			modelsToStart = append(modelsToStart, struct {
+				ModelID      string
+				ScheduleCron string
+			}{modelID, scheduleCron})
+		}
+
+		if len(modelsToStart) == 0 {
+			return
+		}
+
+		r.logf("自动启动 %d 个已启用模型的调度", len(modelsToStart))
+
+		for _, m := range modelsToStart {
+			if err := r.StartModelSchedule(ctx, m.ModelID); err != nil {
+				slog.Warn("Failed to auto-start schedule for model", "model_id", m.ModelID, "error", err)
+			}
+		}
+	}()
 }
 
 // Status returns the current status of the runner
