@@ -191,6 +191,17 @@ const handleDeleteModel = (modelId: string) => {
   })
 }
 
+const getLogClass = (log: string) => {
+  if (log.includes('状态: 正常')) {
+    return 'log-success'
+  } else if (log.includes('状态: 异常')) {
+    return 'log-warning'
+  } else if (log.includes('状态: 错误')) {
+    return 'log-error'
+  }
+  return ''
+}
+
 const availableModelOptions = computed(() => {
   const trackedIds = new Set(trackedModels.value.map(m => m.model_id))
   return availableModels.value
@@ -331,7 +342,7 @@ export default { name: 'ModelCheckConfigView' }
             {{ t('清除日志', 'Clear Logs') }}
           </NButton>
           <div class="logs-container">
-            <div v-for="(log, index) in logs" :key="index" class="log-line">
+            <div v-for="(log, index) in logs" :key="index" class="log-line" :class="getLogClass(log)">
               {{ log }}
             </div>
             <div v-if="logs.length === 0" class="log-line empty">
@@ -380,5 +391,20 @@ export default { name: 'ModelCheckConfigView' }
 .log-line.empty {
   color: #999;
   font-style: italic;
+}
+
+/* 日志颜色 - 正常：绿色 */
+.log-line.log-success {
+  color: #18a058;
+}
+
+/* 日志颜色 - 异常：黄色/橙色 */
+.log-line.log-warning {
+  color: #f0a020;
+}
+
+/* 日志颜色 - 错误：红色 */
+.log-line.log-error {
+  color: #d03050;
 }
 </style>

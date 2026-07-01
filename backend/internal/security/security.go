@@ -66,13 +66,11 @@ func MaskSecret(value *string) string {
 	if normalized == "unknown" {
 		return "unknown"
 	}
-	if len(normalized) <= 4 {
-		return "****"
+	if len(normalized) <= 6 {
+		return "******"
 	}
-	if len(normalized) <= 8 {
-		return normalized[:1] + "..." + normalized[len(normalized)-1:]
-	}
-	return normalized[:6] + "..." + normalized[len(normalized)-4:]
+	// Show first 3 and last 3 characters, mask the middle with asterisks
+	return normalized[:3] + "******" + normalized[len(normalized)-3:]
 }
 
 func SetSessionCookie(w http.ResponseWriter, userID int, secret string) error {
