@@ -22,7 +22,7 @@ let statusInterval: number | null = null
 
 onMounted(async () => {
   await loadData()
-  statusInterval = window.setInterval(loadData, 5000)
+  statusInterval = window.setInterval(loadData, 10000)
 })
 
 const loadData = async () => {
@@ -116,19 +116,19 @@ const columns: DataTableColumns<TrackedModel> = [
     render: (row) => row.schedule_cron || '-',
   },
   {
-    title: () => t('最后检查时间', 'Last Checked'),
-    key: 'last_checked_at',
-    width: 180,
-    render: (row) => formatTime(row.last_checked_at),
-  },
-  {
     title: () => t('最后可用时间', 'Last Available'),
     key: 'last_available_at',
     width: 180,
     render: (row) => formatTime(row.last_available_at),
   },
   {
-    title: () => t('下次运行时间', 'Next Run'),
+    title: () => t('最后巡检时间', 'Last Checked'),
+    key: 'last_checked_at',
+    width: 180,
+    render: (row) => formatTime(row.last_checked_at),
+  },
+  {
+    title: () => t('下次巡检时间', 'Next Run'),
     key: 'next_run_at',
     width: 180,
     render: (row) => formatTime(row.next_run_at),

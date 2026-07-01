@@ -54,7 +54,7 @@ onMounted(async () => {
   await loadTrackedModels()
   await loadAvailableModels()
   await refreshStatus()
-  statusInterval = window.setInterval(refreshStatus, 3000)
+  statusInterval = window.setInterval(refreshStatus, 10000)
 })
 
 const loadGlobalConfig = async () => {
