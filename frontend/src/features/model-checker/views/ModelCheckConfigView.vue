@@ -49,9 +49,26 @@
                 @keydown.enter.stop
               />
               <template #feedback>
-                <span style="font-size: 12px; color: #999;">
-                  每行一个问题，巡检时随机选择其中一个
-                </span>
+                <div style="font-size: 12px; color: #999;">
+                  <div>每行一个问题，巡检时随机选择其中一个</div>
+                  <div style="margin-top: 4px;">
+                    <span style="color: #666; cursor: help;" title="支持的占位符：
+{{random}} - 随机数 0-999999
+{{date}} - 当前日期 20260702
+{{timestamp}} - Unix时间戳
+{{time}} - 当前时间 14:30:25
+{{uuid}} - UUID v4
+{{random:1-100}} - 指定范围随机数
+{{choice:A|B|C}} - 从选项中随机选择
+
+示例：
+今天是{{date}}，现在几点？
+计算 {{random:1-100}} + {{random:1-100}} = ?
+描述{{choice:春天|夏天|秋天|冬天}}">
+                      💡 支持动态占位符（鼠标悬停查看）
+                    </span>
+                  </div>
+                </div>
               </template>
             </NFormItem>
           </NForm>

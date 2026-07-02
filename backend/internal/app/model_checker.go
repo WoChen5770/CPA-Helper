@@ -682,7 +682,7 @@ func (r *ModelCheckRunner) StartModelSchedule(ctx context.Context, modelID strin
 
 	// Add cron job - enqueue instead of direct execution
 	entryID, err := r.cron.AddFunc(model.ScheduleCron, func() {
-		r.enqueueModel(modelID)
+		r.enqueueModel(modelID, false) // Cron triggered - no log
 	})
 	if err != nil {
 		r.mu.Unlock()
@@ -735,7 +735,7 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 
 // CheckSingleModelNow performs an immediate manual check for a single model
 func (r *ModelCheckRunner) CheckSingleModelNow(modelID string) {
-	r.enqueueModel(modelID)
+	r.enqueueModel(modelID, true) // Manual triggered - show log
 }
 
 // startQueueWorker starts the background worker that processes the task queue serially
@@ -767,7 +767,7 @@ func (r *ModelCheckRunner) startQueueWorker() {
 }
 
 // enqueueModel adds a model to the task queue
-func (r *ModelCheckRunner) enqueueModel(modelID string) {
+func (r *ModelCheckRunner) enqueueModel(modelID string, logEnqueue bool) {
 	r.mu.Lock()
 	// Check if already in queue
 	for _, id := range r.queuedModels {
@@ -786,7 +786,9 @@ func (r *ModelCheckRunner) enqueueModel(modelID string) {
 
 	select {
 	case r.taskQueue <- modelID:
-		r.logf("模型 %s 已加入巡检队列", modelID)
+		if logEnqueue {
+			r.logf("模型 %s 已加入巡检队列", modelID)
+		}
 	default:
 		r.mu.Lock()
 		// Remove from queued list if queue is full
@@ -797,7 +799,9 @@ func (r *ModelCheckRunner) enqueueModel(modelID string) {
 			}
 		}
 		r.mu.Unlock()
-		r.logf("队列已满，跳过模型 %s", modelID)
+		if logEnqueue {
+			r.logf("队列已满，跳过模型 %s", modelID)
+		}
 	}
 }
 
@@ -972,6 +976,9 @@ func (r *ModelCheckRunner) checkModelWithTestKeyWithLog(ctx context.Context, cfg
 	if len(globalCfg.TestQuestions) > 0 {
 		*question = globalCfg.TestQuestions[rand.Intn(len(globalCfg.TestQuestions))]
 	}
+
+	// Replace placeholders in the question
+	*question = replacePlaceholders(*question)
 
 	payload := map[string]any{
 		"model": modelID,
