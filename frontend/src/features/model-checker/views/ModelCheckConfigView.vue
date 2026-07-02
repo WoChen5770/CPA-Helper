@@ -26,7 +26,7 @@
       <!-- 全局设置 -->
       <NCard title="全局设置">
         <NSpace vertical :size="12">
-          <NForm label-placement="left" label-width="120">
+          <NForm label-placement="left" label-width="140">
             <NFormItem label="超时时间(秒)">
               <NInputNumber
                 v-model:value="settings.timeout_seconds"
@@ -50,9 +50,8 @@
               />
               <template #feedback>
                 <div style="font-size: 12px; color: #999;">
-                  <div>每行一个问题，巡检时随机选择其中一个</div>
-                  <div style="margin-top: 4px;">
-                    <span style="color: #666; cursor: help;" title="支持的占位符：
+                  每行一个问题，巡检时随机选择其中一个
+                  <span style="color: #666; cursor: help;" title="支持的占位符：
 {{random}} - 随机数 0-999999
 {{date}} - 当前日期 20260702
 {{timestamp}} - Unix时间戳
@@ -64,10 +63,7 @@
 示例：
 今天是{{date}}，现在几点？
 计算 {{random:1-100}} + {{random:1-100}} = ?
-描述{{choice:春天|夏天|秋天|冬天}}">
-                      💡 支持动态占位符（鼠标悬停查看）
-                    </span>
-                  </div>
+描述{{choice:春天|夏天|秋天|冬天}}">💡 支持动态占位符</span>
                 </div>
               </template>
             </NFormItem>
