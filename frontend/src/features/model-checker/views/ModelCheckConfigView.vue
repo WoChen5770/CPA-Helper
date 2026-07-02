@@ -214,7 +214,18 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import type { TrackedModel, ModelCheckerStatus, ModelCheckerConfig } from '@/shared/types/api'
-import * as api from '../api/modelCheckerApi'
+import {
+  getModelCheckerSettings,
+  updateModelCheckerSettings,
+  getModelCheckerStatus,
+  getTrackedModels,
+  addTrackedModel,
+  updateTrackedModel,
+  deleteTrackedModel,
+  startModelSchedule,
+  stopModelSchedule,
+  clearModelCheckerLogs,
+} from '../api/modelCheckerApi'
 
 const message = useMessage()
 
@@ -260,27 +271,18 @@ const showAddModel = ref(false)
 const formModel = ref({
   model_id: '',
   provider: '',
-  check_interval_minutes: 60,
-  timeout_seconds: 30,
-  max_retries: 2,
-  alert_on_unavailable: true,
+  schedule_cron: '0 */6 * * *',
 })
 
 const showEditModel = ref(false)
 const editFormModel = ref<{
   model_id: string
   enabled: boolean
-  check_interval_minutes: number
-  timeout_seconds: number
-  max_retries: number
-  alert_on_unavailable: boolean
+  schedule_cron: string
 }>({
   model_id: '',
   enabled: true,
-  check_interval_minutes: 60,
-  timeout_seconds: 30,
-  max_retries: 2,
-  alert_on_unavailable: true,
+  schedule_cron: '0 */6 * * *',
 })
 
 const columns: DataTableColumns<TrackedModel> = [
@@ -372,9 +374,9 @@ let pollTimer: number | null = null
 async function loadData() {
   try {
     const [statusRes, modelsRes, settingsRes] = await Promise.all([
-      api.getModelCheckerStatus(),
-      api.getTrackedModels(),
-      api.getModelCheckerSettings(),
+      getModelCheckerStatus(),
+      getTrackedModels(),
+      getModelCheckerSettings(),
     ])
     status.value = statusRes
     trackedModels.value = modelsRes
@@ -386,7 +388,7 @@ async function loadData() {
 
 async function handleUpdateSettings() {
   try {
-    const updated = await api.updateModelCheckerSettings({
+    const updated = await updateModelCheckerSettings({
       timeout_seconds: settings.value.timeout_seconds,
       test_api_key: settings.value.test_api_key,
       test_questions: settings.value.test_questions,
@@ -401,8 +403,8 @@ async function handleUpdateSettings() {
 async function handleRunOnce() {
   loading.value = true
   try {
-    await api.runModelCheckerOnce()
-    message.success('已启动检查')
+    // TODO: 实现立即检查所有模型的功能
+    message.warning('该功能暂未实现')
     loadData()
   } catch (err: any) {
     message.error(err.message || '启动失败')
@@ -414,8 +416,8 @@ async function handleRunOnce() {
 async function handleStartDaemon() {
   loading.value = true
   try {
-    await api.startModelChecker()
-    message.success('Daemon 已启动')
+    // TODO: 实现启动 Daemon 的功能
+    message.warning('该功能暂未实现')
     loadData()
   } catch (err: any) {
     message.error(err.message || '启动失败')
@@ -427,8 +429,8 @@ async function handleStartDaemon() {
 async function handleStopDaemon() {
   loading.value = true
   try {
-    await api.stopModelChecker()
-    message.success('Daemon 已停止')
+    // TODO: 实现停止 Daemon 的功能
+    message.warning('该功能暂未实现')
     loadData()
   } catch (err: any) {
     message.error(err.message || '停止失败')
@@ -439,7 +441,7 @@ async function handleStopDaemon() {
 
 async function handleClearLogs() {
   try {
-    await api.clearModelCheckerLogs()
+    await clearModelCheckerLogs()
     message.success('日志已清除')
     loadData()
   } catch (err: any) {
@@ -453,16 +455,13 @@ async function handleAddModel() {
     return
   }
   try {
-    await api.addTrackedModel(formModel.value)
+    await addTrackedModel(formModel.value)
     message.success('模型已添加到监控')
     showAddModel.value = false
     formModel.value = {
       model_id: '',
       provider: '',
-      check_interval_minutes: 60,
-      timeout_seconds: 30,
-      max_retries: 2,
-      alert_on_unavailable: true,
+      schedule_cron: '0 */6 * * *',
     }
     loadData()
   } catch (err: any) {
@@ -474,22 +473,16 @@ function handleEdit(row: TrackedModel) {
   editFormModel.value = {
     model_id: row.model_id,
     enabled: row.enabled,
-    check_interval_minutes: row.check_interval_minutes,
-    timeout_seconds: row.timeout_seconds,
-    max_retries: row.max_retries,
-    alert_on_unavailable: row.alert_on_unavailable,
+    schedule_cron: row.schedule_cron,
   }
   showEditModel.value = true
 }
 
 async function handleUpdateModel() {
   try {
-    await api.updateTrackedModel(editFormModel.value.model_id, {
+    await updateTrackedModel(editFormModel.value.model_id, {
       enabled: editFormModel.value.enabled,
-      check_interval_minutes: editFormModel.value.check_interval_minutes,
-      timeout_seconds: editFormModel.value.timeout_seconds,
-      max_retries: editFormModel.value.max_retries,
-      alert_on_unavailable: editFormModel.value.alert_on_unavailable,
+      schedule_cron: editFormModel.value.schedule_cron,
     })
     message.success('配置已更新')
     showEditModel.value = false
@@ -501,7 +494,7 @@ async function handleUpdateModel() {
 
 async function handleToggleEnabled(modelId: string, enabled: boolean) {
   try {
-    await api.updateTrackedModel(modelId, { enabled })
+    await updateTrackedModel(modelId, { enabled })
     message.success(enabled ? '已启用' : '已停用')
     loadData()
   } catch (err: any) {
@@ -511,8 +504,8 @@ async function handleToggleEnabled(modelId: string, enabled: boolean) {
 
 async function handleCheck(modelId: string) {
   try {
-    await api.checkTrackedModel(modelId)
-    message.success('已启动检查')
+    await startModelSchedule(modelId)
+    message.success('已启动调度')
     loadData()
   } catch (err: any) {
     message.error(err.message || '启动失败')
@@ -521,7 +514,7 @@ async function handleCheck(modelId: string) {
 
 async function handleDelete(modelId: string) {
   try {
-    await api.deleteTrackedModel(modelId)
+    await deleteTrackedModel(modelId)
     message.success('模型已从监控移除')
     loadData()
   } catch (err: any) {
