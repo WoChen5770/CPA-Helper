@@ -247,7 +247,7 @@ const settings = ref<ModelCheckerConfig>({
 
 // Convert test_questions array to/from textarea text
 const testQuestionsText = computed({
-  get: () => settings.value.test_questions.join('\n'),
+  get: () => (settings.value.test_questions || []).join('\n'),
   set: (val: string) => {
     settings.value.test_questions = val
       .split('\n')
