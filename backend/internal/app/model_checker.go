@@ -415,7 +415,11 @@ func (a *App) updateModelCheckerSettings(w http.ResponseWriter, r *http.Request)
 		cfg.TimeoutSeconds = *payload.TimeoutSeconds
 	}
 	if payload.TestAPIKey != nil {
-		cfg.TestAPIKey = *payload.TestAPIKey
+		newKey := *payload.TestAPIKey
+		// Ignore if the new key contains ***, which means it's a masked value
+		if !strings.Contains(newKey, "***") {
+			cfg.TestAPIKey = newKey
+		}
 	}
 	if payload.TestQuestions != nil {
 		cfg.TestQuestions = *payload.TestQuestions
@@ -423,6 +427,11 @@ func (a *App) updateModelCheckerSettings(w http.ResponseWriter, r *http.Request)
 
 	if err := a.saveModelCheckerConfig(r.Context(), cfg); err != nil {
 		return err
+	}
+
+	// Mask the test API key for security before returning
+	if cfg.TestAPIKey != "" {
+		cfg.TestAPIKey = maskSecret(&cfg.TestAPIKey)
 	}
 
 	writeJSON(w, http.StatusOK, cfg)
@@ -849,10 +858,16 @@ func (r *ModelCheckRunner) checkSingleModelWithLog(ctx context.Context, model tr
 
 	available := r.checkModelWithTestKeyWithLog(ctx, cfg, globalCfg.TestAPIKey, model.ModelID, timeout, statusCode, content, question)
 
+	// Determine status based on HTTP status code
 	if available {
 		result.Status = "available"
 	} else {
-		result.Status = "unavailable"
+		// 5xx status codes are errors, 4xx are unavailable
+		if *statusCode >= 500 && *statusCode < 600 {
+			result.Status = "error"
+		} else {
+			result.Status = "unavailable"
+		}
 	}
 
 	lastStatus := ""

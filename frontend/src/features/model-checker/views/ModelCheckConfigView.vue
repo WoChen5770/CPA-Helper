@@ -540,7 +540,7 @@ onMounted(() => {
   void loadInitialData()
   pollTimer = window.setInterval(() => {
     void loadData()
-  }, 3000)
+  }, 10000)
 })
 
 onUnmounted(() => {
