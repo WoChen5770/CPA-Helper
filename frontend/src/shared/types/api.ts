@@ -630,6 +630,7 @@ export interface ApiKeyUpdatePayload {
 export interface ModelCheckerConfig {
   timeout_seconds: number
   test_api_key: string
+  test_questions: string[]
 }
 
 export interface ModelCheckerStatus {

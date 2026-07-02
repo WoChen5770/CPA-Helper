@@ -65,13 +65,15 @@ type modelCheckStatusResponse struct {
 }
 
 type ModelCheckerConfig struct {
-	TimeoutSeconds int    `json:"timeout_seconds"`
-	TestAPIKey     string `json:"test_api_key"`
+	TimeoutSeconds int      `json:"timeout_seconds"`
+	TestAPIKey     string   `json:"test_api_key"`
+	TestQuestions  []string `json:"test_questions"`
 }
 
 type modelCheckerSettingsUpdateRequest struct {
-	TimeoutSeconds *int    `json:"timeout_seconds"`
-	TestAPIKey     *string `json:"test_api_key"`
+	TimeoutSeconds *int      `json:"timeout_seconds"`
+	TestAPIKey     *string   `json:"test_api_key"`
+	TestQuestions  *[]string `json:"test_questions"`
 }
 
 type trackedModel struct {
@@ -376,6 +378,9 @@ func (a *App) updateModelCheckerSettings(w http.ResponseWriter, r *http.Request)
 	}
 	if payload.TestAPIKey != nil {
 		cfg.TestAPIKey = *payload.TestAPIKey
+	}
+	if payload.TestQuestions != nil {
+		cfg.TestQuestions = *payload.TestQuestions
 	}
 
 	if err := a.saveModelCheckerConfig(r.Context(), cfg); err != nil {
@@ -817,10 +822,23 @@ func (r *ModelCheckRunner) checkModelWithTestKeyWithLog(ctx context.Context, cfg
 
 	client := httpClient(timeout)
 
+	// Get global config to access test questions
+	globalCfg, err := r.app.loadModelCheckerConfig(ctx)
+	if err != nil {
+		*statusCode = 0
+		return false
+	}
+
+	// Pick a random question from the configured questions
+	question := "你想一个数字，然后乘以3再减去3，直接给我结果" // default question
+	if len(globalCfg.TestQuestions) > 0 {
+		question = globalCfg.TestQuestions[rand.Intn(len(globalCfg.TestQuestions))]
+	}
+
 	payload := map[string]any{
 		"model": modelID,
 		"messages": []map[string]string{
-			{"role": "user", "content": "你想一个数字，然后乘以3再减去3，直接给我结果"},
+			{"role": "user", "content": question},
 		},
 		"stream":     false,
 		"max_tokens": 10,
