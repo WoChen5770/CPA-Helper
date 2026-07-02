@@ -40,6 +40,9 @@ type ModelCheckRunner struct {
 	logs           []string
 	cron           *cron.Cron
 	cronEntries    map[string]cron.EntryID // modelID -> cron entry ID
+	taskQueue      chan string             // Task queue for serial execution
+	queuedModels   []string                // Ordered list of models in queue
+	queueWorker    bool                    // Whether queue worker is running
 }
 
 type modelCheckStats struct {
@@ -62,6 +65,7 @@ type modelCheckStatusResponse struct {
 	LastFinishedAt *string         `json:"last_finished_at"`
 	Stats          modelCheckStats `json:"stats"`
 	Logs           []string        `json:"logs"`
+	QueuedModels   []string        `json:"queued_models"` // Ordered list of models in queue
 }
 
 type ModelCheckerConfig struct {
@@ -110,14 +114,19 @@ type checkModelResult struct {
 }
 
 func newModelCheckRunner(app *App) *ModelCheckRunner {
-	return &ModelCheckRunner{
+	r := &ModelCheckRunner{
 		app:          app,
 		runningModes: make(map[string]struct{}),
 		cronEntries:  make(map[string]cron.EntryID),
 		state:        "idle",
 		logs:         make([]string, 0, modelCheckerMaxInMemoryLogs),
 		cron:         cron.New(cron.WithLocation(appTimeLocation)),
+		taskQueue:    make(chan string, 100), // Buffered queue for 100 models
+		queuedModels: make([]string, 0),
 	}
+	// Start queue worker
+	r.startQueueWorker()
+	return r
 }
 
 // LoadAndStartSchedules loads all enabled models and starts their schedules
@@ -202,6 +211,7 @@ func (r *ModelCheckRunner) Status() modelCheckStatusResponse {
 		LastFinishedAt: lastFinished,
 		Stats:          stats,
 		Logs:           append([]string{}, r.logs...),
+		QueuedModels:   append([]string{}, r.queuedModels...),
 	}
 }
 
@@ -670,9 +680,9 @@ func (r *ModelCheckRunner) StartModelSchedule(ctx context.Context, modelID strin
 		return fmt.Errorf("模型 %s 未启用", modelID)
 	}
 
-	// Add cron job
+	// Add cron job - enqueue instead of direct execution
 	entryID, err := r.cron.AddFunc(model.ScheduleCron, func() {
-		r.CheckSingleModel(modelID)
+		r.enqueueModel(modelID)
 	})
 	if err != nil {
 		r.mu.Unlock()
@@ -718,14 +728,77 @@ func (r *ModelCheckRunner) StopModelSchedule(modelID string) {
 	r.logf("模型 %s 的调度已停止", modelID)
 }
 
-// CheckSingleModel performs a check for a single model
+// CheckSingleModel performs a check for a single model (scheduled)
 func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 	r.checkSingleModel(modelID, true)
 }
 
 // CheckSingleModelNow performs an immediate manual check for a single model
 func (r *ModelCheckRunner) CheckSingleModelNow(modelID string) {
-	r.checkSingleModel(modelID, false)
+	r.enqueueModel(modelID)
+}
+
+// startQueueWorker starts the background worker that processes the task queue serially
+func (r *ModelCheckRunner) startQueueWorker() {
+	r.mu.Lock()
+	if r.queueWorker {
+		r.mu.Unlock()
+		return
+	}
+	r.queueWorker = true
+	r.mu.Unlock()
+
+	go func() {
+		for modelID := range r.taskQueue {
+			// Remove from queued list
+			r.mu.Lock()
+			for i, id := range r.queuedModels {
+				if id == modelID {
+					r.queuedModels = append(r.queuedModels[:i], r.queuedModels[i+1:]...)
+					break
+				}
+			}
+			r.mu.Unlock()
+
+			// Execute the check
+			r.checkSingleModel(modelID, false)
+		}
+	}()
+}
+
+// enqueueModel adds a model to the task queue
+func (r *ModelCheckRunner) enqueueModel(modelID string) {
+	r.mu.Lock()
+	// Check if already in queue
+	for _, id := range r.queuedModels {
+		if id == modelID {
+			r.mu.Unlock()
+			return
+		}
+	}
+	// Check if already running
+	if _, exists := r.runningModes[modelID]; exists {
+		r.mu.Unlock()
+		return
+	}
+	r.queuedModels = append(r.queuedModels, modelID)
+	r.mu.Unlock()
+
+	select {
+	case r.taskQueue <- modelID:
+		r.logf("模型 %s 已加入巡检队列", modelID)
+	default:
+		r.mu.Lock()
+		// Remove from queued list if queue is full
+		for i, id := range r.queuedModels {
+			if id == modelID {
+				r.queuedModels = append(r.queuedModels[:i], r.queuedModels[i+1:]...)
+				break
+			}
+		}
+		r.mu.Unlock()
+		r.logf("队列已满，跳过模型 %s", modelID)
+	}
 }
 
 func (r *ModelCheckRunner) checkSingleModel(modelID string, withRandomDelay bool) {

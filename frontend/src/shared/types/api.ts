@@ -644,6 +644,7 @@ export interface ModelCheckerStatus {
   last_finished_at: string | null
   stats: ModelCheckStats
   logs: string[]
+  queued_models: string[]
 }
 
 export interface ModelCheckStats {

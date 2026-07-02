@@ -20,6 +20,10 @@
             <div class="overview-label">错误</div>
             <div class="overview-value">{{ status.stats.error_models }}</div>
           </div>
+          <div class="overview-item queue">
+            <div class="overview-label">队列中</div>
+            <div class="overview-value">{{ status.queued_models.length }}</div>
+          </div>
         </div>
       </NCard>
 
@@ -168,6 +172,7 @@ const status = ref<ModelCheckerStatus>({
     error_models: 0,
   },
   logs: [],
+  queued_models: [],
 })
 const trackedModels = ref<TrackedModel[]>([])
 const availableModels = ref<AvailableModel[]>([])
@@ -203,6 +208,34 @@ const testQuestionsText = computed({
 
 const reversedLogs = computed(() => [...status.value.logs].reverse())
 
+// Compute real-time status for each model
+function getModelRuntimeStatus(modelId: string): { text: string; type: 'info' | 'success' | 'warning' | 'error' | 'default'; loading?: boolean } {
+  // Priority 1: Checking
+  if (status.value.running_modes.includes(modelId)) {
+    return { text: '巡检中', type: 'info', loading: true }
+  }
+
+  // Priority 2: In queue
+  const queueIndex = status.value.queued_models.indexOf(modelId)
+  if (queueIndex !== -1) {
+    return { text: `队列中 (第${queueIndex + 1}位)`, type: 'warning' }
+  }
+
+  // Priority 3: Last status
+  const model = trackedModels.value.find(m => m.model_id === modelId)
+  if (!model || !model.last_status) {
+    return { text: '-', type: 'default' }
+  }
+
+  const statusMap = {
+    available: { text: '正常', type: 'success' as const },
+    unavailable: { text: '异常', type: 'warning' as const },
+    error: { text: '错误', type: 'error' as const },
+  }
+  const config = statusMap[model.last_status as keyof typeof statusMap]
+  return config || { text: model.last_status, type: 'default' }
+}
+
 const columns: DataTableColumns<TrackedModel> = [
   {
     title: '模型 ID',
@@ -210,18 +243,21 @@ const columns: DataTableColumns<TrackedModel> = [
     width: 180,
   },
   {
-    title: '最新状态',
-    key: 'last_status',
-    width: 100,
+    title: '状态',
+    key: 'status',
+    width: 140,
     render: (row) => {
-      if (!row.last_status) return '-'
-      const statusMap = {
-        available: { text: '正常', type: 'success' as const },
-        unavailable: { text: '异常', type: 'warning' as const },
-        error: { text: '错误', type: 'error' as const },
+      const runtimeStatus = getModelRuntimeStatus(row.model_id)
+      if (runtimeStatus.loading) {
+        return h('div', { style: 'display: flex; align-items: center; gap: 6px;' }, [
+          h('span', { class: 'status-spinner' }, '⟳'),
+          h(NTag, { type: runtimeStatus.type, size: 'small' }, { default: () => runtimeStatus.text }),
+        ])
       }
-      const config = statusMap[row.last_status as keyof typeof statusMap] || { text: row.last_status, type: 'default' as const }
-      return h(NTag, { type: config.type, size: 'small' }, { default: () => config.text })
+      return h(NTag, {
+        type: runtimeStatus.type,
+        size: 'small',
+      }, { default: () => runtimeStatus.text })
     },
   },
   {
@@ -586,6 +622,11 @@ onUnmounted(() => {
   border-left-color: #ef4444;
 }
 
+.overview-item.queue {
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  border-left-color: #3b82f6;
+}
+
 .overview-label {
   font-size: 14px;
   color: #666;
@@ -609,6 +650,10 @@ onUnmounted(() => {
 
 .overview-item.error .overview-value {
   color: #dc2626;
+}
+
+.overview-item.queue .overview-value {
+  color: #2563eb;
 }
 
 /* 日志样式 */
@@ -645,5 +690,22 @@ onUnmounted(() => {
   color: #999;
   text-align: center;
   padding: 20px;
+}
+
+/* 状态加载动画 */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.status-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+  font-size: 16px;
+  color: #3b82f6;
 }
 </style>
