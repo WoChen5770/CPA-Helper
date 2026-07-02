@@ -4,7 +4,7 @@
       <!-- 概览卡片 -->
       <NCard>
         <div class="overview-grid">
-          <div class="overview-item">
+          <div class="overview-item info">
             <div class="overview-label">总模型数</div>
             <div class="overview-value">{{ status.stats.total_models }}</div>
           </div>
@@ -19,10 +19,6 @@
           <div class="overview-item error">
             <div class="overview-label">错误</div>
             <div class="overview-value">{{ status.stats.error_models }}</div>
-          </div>
-          <div class="overview-item queue">
-            <div class="overview-label">队列中</div>
-            <div class="overview-value">{{ status.queued_models.length }}</div>
           </div>
         </div>
       </NCard>
@@ -622,7 +618,7 @@ onUnmounted(() => {
   border-left-color: #ef4444;
 }
 
-.overview-item.queue {
+.overview-item.info {
   background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
   border-left-color: #3b82f6;
 }
@@ -652,7 +648,7 @@ onUnmounted(() => {
   color: #dc2626;
 }
 
-.overview-item.queue .overview-value {
+.overview-item.info .overview-value {
   color: #2563eb;
 }
 
