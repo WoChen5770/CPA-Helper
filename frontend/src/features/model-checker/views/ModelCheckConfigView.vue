@@ -144,17 +144,8 @@
         <NFormItem label="Provider" path="provider">
           <NInput v-model:value="formModel.provider" placeholder="例如: anthropic" />
         </NFormItem>
-        <NFormItem label="巡检间隔(分钟)" path="check_interval_minutes">
-          <NInputNumber v-model:value="formModel.check_interval_minutes" :min="1" placeholder="60" />
-        </NFormItem>
-        <NFormItem label="超时时间(秒)" path="timeout_seconds">
-          <NInputNumber v-model:value="formModel.timeout_seconds" :min="1" placeholder="30" />
-        </NFormItem>
-        <NFormItem label="最大重试次数" path="max_retries">
-          <NInputNumber v-model:value="formModel.max_retries" :min="0" :max="10" placeholder="2" />
-        </NFormItem>
-        <NFormItem label="告警开关" path="alert_on_unavailable">
-          <NSwitch v-model:value="formModel.alert_on_unavailable" />
+        <NFormItem label="Cron 表达式" path="schedule_cron">
+          <NInput v-model:value="formModel.schedule_cron" placeholder="例如: 0 */6 * * * (每6小时)" />
         </NFormItem>
       </NForm>
 
@@ -172,17 +163,8 @@
         <NFormItem label="启用" path="enabled">
           <NSwitch v-model:value="editFormModel.enabled" />
         </NFormItem>
-        <NFormItem label="巡检间隔(分钟)" path="check_interval_minutes">
-          <NInputNumber v-model:value="editFormModel.check_interval_minutes" :min="1" />
-        </NFormItem>
-        <NFormItem label="超时时间(秒)" path="timeout_seconds">
-          <NInputNumber v-model:value="editFormModel.timeout_seconds" :min="1" />
-        </NFormItem>
-        <NFormItem label="最大重试次数" path="max_retries">
-          <NInputNumber v-model:value="editFormModel.max_retries" :min="0" :max="10" />
-        </NFormItem>
-        <NFormItem label="告警开关" path="alert_on_unavailable">
-          <NSwitch v-model:value="editFormModel.alert_on_unavailable" />
+        <NFormItem label="Cron 表达式" path="schedule_cron">
+          <NInput v-model:value="editFormModel.schedule_cron" placeholder="例如: 0 */6 * * * (每6小时)" />
         </NFormItem>
       </NForm>
 
@@ -391,7 +373,7 @@ async function handleUpdateSettings() {
     const updated = await updateModelCheckerSettings({
       timeout_seconds: settings.value.timeout_seconds,
       test_api_key: settings.value.test_api_key,
-      test_questions: settings.value.test_questions,
+      test_questions: settings.value.test_questions || [],
     })
     settings.value = updated
     message.success('设置已保存')
