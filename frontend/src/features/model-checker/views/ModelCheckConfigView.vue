@@ -52,21 +52,31 @@
                 @keydown.enter.stop
               />
               <template #feedback>
-                <div style="font-size: 12px; color: #999;">
-                  每行一个问题，巡检时随机选择其中一个
-                  <span style="color: #666; cursor: help;" title="支持的占位符：
-{{random}} - 随机数 0-999999
-{{date}} - 当前日期 20260702
-{{timestamp}} - Unix时间戳
-{{time}} - 当前时间 14:30:25
-{{uuid}} - UUID v4
-{{random:1-100}} - 指定范围随机数
-{{choice:A|B|C}} - 从选项中随机选择
-
-示例：
-今天是{{date}}，现在几点？
-计算 {{random:1-100}} + {{random:1-100}} = ?
-描述{{choice:春天|夏天|秋天|冬天}}">💡 支持动态占位符</span>
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: #999;">
+                  <span>每行一个问题，巡检时随机选择其中一个</span>
+                  <NPopover trigger="click" placement="bottom-start" :width="420">
+                    <template #trigger>
+                      <NButton quaternary circle size="tiny" type="primary" aria-label="查看动态占位符说明">
+                        <template #icon>
+                          <NIcon :component="Info" />
+                        </template>
+                      </NButton>
+                    </template>
+                    <div style="font-size: 12px; line-height: 1.7; color: #333;">
+                      <div style="font-weight: 600; margin-bottom: 6px;">支持的占位符</div>
+                      <div><code>{{random}}</code> - 随机数 0-999999</div>
+                      <div><code>{{date}}</code> - 当前日期 20260702</div>
+                      <div><code>{{timestamp}}</code> - Unix 时间戳</div>
+                      <div><code>{{time}}</code> - 当前时间 14:30:25</div>
+                      <div><code>{{uuid}}</code> - UUID v4</div>
+                      <div><code>{{random:1-100}}</code> - 指定范围随机数</div>
+                      <div><code>{{choice:A|B|C}}</code> - 从选项中随机选择</div>
+                      <div style="font-weight: 600; margin: 10px 0 6px;">示例</div>
+                      <div><code>今天是{{date}}，现在几点？</code></div>
+                      <div><code>计算 {{random:1-100}} + {{random:1-100}} = ?</code></div>
+                      <div><code>描述{{choice:春天|夏天|秋天|冬天}}</code></div>
+                    </div>
+                  </NPopover>
                 </div>
               </template>
             </NFormItem>
@@ -143,6 +153,8 @@ import {
   NInputNumber,
   NSwitch,
   NSelect,
+  NPopover,
+  NIcon,
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
@@ -160,6 +172,7 @@ import {
   clearModelCheckerLogs,
 } from '../api/modelCheckerApi'
 import { listAvailableModels } from '@/features/models/api/availableModelsApi'
+import { Info } from 'lucide-vue-next'
 
 const message = useMessage()
 const { errorText } = useI18n()
@@ -337,7 +350,7 @@ const columns: DataTableColumns<TrackedModel> = [
           onClick: () => {
             void handleCheck(row.model_id)
           },
-        }, { default: () => '立即巡检' }),
+        }, { default: () => '手动巡检' }),
         h(NButton, {
           size: 'small',
           type: 'error',

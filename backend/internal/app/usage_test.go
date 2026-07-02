@@ -432,19 +432,19 @@ func TestUsageResponsesRedactAPIKeySourceWithoutChangingStoredRecord(t *testing.
 	if len(records.Items) != 1 {
 		t.Fatalf("usage record count = %d, want 1", len(records.Items))
 	}
-	if records.Items[0].Source == source || !strings.Contains(records.Items[0].Source, "...") {
+	if records.Items[0].Source == source || !strings.Contains(records.Items[0].Source, "******") {
 		t.Fatalf("list source = %q, want masked API key", records.Items[0].Source)
 	}
 
 	detail := usageRecordDetailResponse{}
 	requestJSON(t, handler, http.MethodGet, "/api/usage/records/"+strconv.Itoa(id)+"?scope=admin", nil, cookies, &detail)
-	if detail.Source == source || !strings.Contains(detail.Source, "...") {
+	if detail.Source == source || !strings.Contains(detail.Source, "******") {
 		t.Fatalf("detail source = %q, want masked API key", detail.Source)
 	}
-	if got, _ := detail.RawJSON["source"].(string); got == source || !strings.Contains(got, "...") {
+	if got, _ := detail.RawJSON["source"].(string); got == source || !strings.Contains(got, "******") {
 		t.Fatalf("raw_json.source = %q, want masked API key", got)
 	}
-	if got, _ := detail.RawJSON["api_key"].(string); got == source || !strings.Contains(got, "...") {
+	if got, _ := detail.RawJSON["api_key"].(string); got == source || !strings.Contains(got, "******") {
 		t.Fatalf("raw_json.api_key = %q, want masked API key", got)
 	}
 	options := usageOptionsTestResponse{}
@@ -452,7 +452,7 @@ func TestUsageResponsesRedactAPIKeySourceWithoutChangingStoredRecord(t *testing.
 	if len(options.Sources) != 1 {
 		t.Fatalf("source options = %#v, want masked API key source", options.Sources)
 	}
-	if options.Sources[0].Key != sourceKeyForTest(source) || options.Sources[0].Label == source || !strings.Contains(options.Sources[0].Label, "...") {
+	if options.Sources[0].Key != sourceKeyForTest(source) || options.Sources[0].Label == source || !strings.Contains(options.Sources[0].Label, "******") {
 		t.Fatalf("source option = %#v, want masked API key label with stable source key", options.Sources[0])
 	}
 
@@ -498,10 +498,10 @@ func TestUsageDetailRedactsSourceWhenRawJSONAuthTypeIsAPIKey(t *testing.T) {
 
 	detail := usageRecordDetailResponse{}
 	requestJSON(t, handler, http.MethodGet, "/api/usage/records/"+strconv.Itoa(id)+"?scope=admin", nil, cookies, &detail)
-	if detail.Source == source || !strings.Contains(detail.Source, "...") {
+	if detail.Source == source || !strings.Contains(detail.Source, "******") {
 		t.Fatalf("detail source = %q, want masked API key source for admin", detail.Source)
 	}
-	if got, _ := detail.RawJSON["source"].(string); got == source || !strings.Contains(got, "...") {
+	if got, _ := detail.RawJSON["source"].(string); got == source || !strings.Contains(got, "******") {
 		t.Fatalf("raw_json.source = %q, want masked API key source for admin", got)
 	}
 }
@@ -565,16 +565,16 @@ func TestUsageRecordDetailRedactsAccountSourceForNonAdminOnly(t *testing.T) {
 
 	memberDetail := usageRecordDetailResponse{}
 	requestJSON(t, handler, http.MethodGet, "/api/usage/records/"+strconv.Itoa(id)+"?scope=account", nil, memberCookies, &memberDetail)
-	if memberDetail.Source == source || !strings.Contains(memberDetail.Source, "...") {
+	if memberDetail.Source == source || !strings.Contains(memberDetail.Source, "******") {
 		t.Fatalf("member detail source = %q, want masked account source", memberDetail.Source)
 	}
-	if got, _ := memberDetail.RawJSON["source"].(string); got == source || !strings.Contains(got, "...") {
+	if got, _ := memberDetail.RawJSON["source"].(string); got == source || !strings.Contains(got, "******") {
 		t.Fatalf("member raw_json.source = %q, want masked account source", got)
 	}
-	if memberDetail.AuthIndex == nil || *memberDetail.AuthIndex == authIndex || !strings.Contains(*memberDetail.AuthIndex, "...") {
+	if memberDetail.AuthIndex == nil || *memberDetail.AuthIndex == authIndex || !strings.Contains(*memberDetail.AuthIndex, "******") {
 		t.Fatalf("member detail auth_index = %v, want masked auth index", memberDetail.AuthIndex)
 	}
-	if got, _ := memberDetail.RawJSON["auth_index"].(string); got == authIndex || !strings.Contains(got, "...") {
+	if got, _ := memberDetail.RawJSON["auth_index"].(string); got == authIndex || !strings.Contains(got, "******") {
 		t.Fatalf("member raw_json.auth_index = %q, want masked auth index", got)
 	}
 
@@ -583,7 +583,7 @@ func TestUsageRecordDetailRedactsAccountSourceForNonAdminOnly(t *testing.T) {
 	if len(memberRecords.Items) != 1 {
 		t.Fatalf("member usage record count = %d, want 1", len(memberRecords.Items))
 	}
-	if memberRecords.Items[0].AuthIndex == nil || *memberRecords.Items[0].AuthIndex == authIndex || !strings.Contains(*memberRecords.Items[0].AuthIndex, "...") {
+	if memberRecords.Items[0].AuthIndex == nil || *memberRecords.Items[0].AuthIndex == authIndex || !strings.Contains(*memberRecords.Items[0].AuthIndex, "******") {
 		t.Fatalf("member list auth_index = %v, want masked auth index", memberRecords.Items[0].AuthIndex)
 	}
 	memberOptions := usageOptionsTestResponse{}

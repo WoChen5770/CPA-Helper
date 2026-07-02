@@ -42,6 +42,7 @@ type ModelCheckRunner struct {
 	cronEntries    map[string]cron.EntryID // modelID -> cron entry ID
 	taskQueue      chan string             // Task queue for serial execution
 	queuedModels   []string                // Ordered list of models in queue
+	forcedChecks   map[string]bool         // modelID -> manual check should bypass enabled guard
 	queueWorker    bool                    // Whether queue worker is running
 }
 
@@ -123,6 +124,7 @@ func newModelCheckRunner(app *App) *ModelCheckRunner {
 		cron:         cron.New(cron.WithLocation(appTimeLocation)),
 		taskQueue:    make(chan string, 100), // Buffered queue for 100 models
 		queuedModels: make([]string, 0),
+		forcedChecks: make(map[string]bool),
 	}
 	// Start queue worker
 	r.startQueueWorker()
@@ -602,11 +604,21 @@ func (a *App) updateTrackedModel(w http.ResponseWriter, r *http.Request, modelID
 		return err
 	}
 
-	// If schedule_cron was updated, restart the schedule
-	if payload.ScheduleCron != nil {
+	// If enabled state or schedule changed, sync the schedule with the latest config
+	if payload.Enabled != nil || payload.ScheduleCron != nil {
 		a.modelCheckRunner.StopModelSchedule(modelID)
-		if err := a.modelCheckRunner.StartModelSchedule(r.Context(), modelID); err != nil {
-			slog.Warn("Failed to restart schedule after update", "model_id", modelID, "error", err)
+
+		var enabledInt int
+		if err := a.db.QueryRowContext(r.Context(), `
+			SELECT enabled FROM model_checker_tracked_models WHERE model_id = ?
+		`, modelID).Scan(&enabledInt); err != nil {
+			return err
+		}
+
+		if enabledInt == 1 {
+			if err := a.modelCheckRunner.StartModelSchedule(r.Context(), modelID); err != nil {
+				slog.Warn("Failed to sync schedule after update", "model_id", modelID, "error", err)
+			}
 		}
 	}
 
@@ -682,7 +694,7 @@ func (r *ModelCheckRunner) StartModelSchedule(ctx context.Context, modelID strin
 
 	// Add cron job - enqueue instead of direct execution
 	entryID, err := r.cron.AddFunc(model.ScheduleCron, func() {
-		r.enqueueModel(modelID, false) // Cron triggered - no log
+		r.enqueueModel(modelID, false, false) // Cron triggered - no log, respect enabled state
 	})
 	if err != nil {
 		r.mu.Unlock()
@@ -735,7 +747,7 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 
 // CheckSingleModelNow performs an immediate manual check for a single model
 func (r *ModelCheckRunner) CheckSingleModelNow(modelID string) {
-	r.enqueueModel(modelID, true) // Manual triggered - show log
+	r.enqueueModel(modelID, true, true) // Manual triggered - show log and bypass enabled guard
 }
 
 // startQueueWorker starts the background worker that processes the task queue serially
@@ -767,19 +779,28 @@ func (r *ModelCheckRunner) startQueueWorker() {
 }
 
 // enqueueModel adds a model to the task queue
-func (r *ModelCheckRunner) enqueueModel(modelID string, logEnqueue bool) {
+func (r *ModelCheckRunner) enqueueModel(modelID string, logEnqueue bool, forceCheck bool) {
 	r.mu.Lock()
 	// Check if already in queue
 	for _, id := range r.queuedModels {
 		if id == modelID {
+			if forceCheck {
+				r.forcedChecks[modelID] = true
+			}
 			r.mu.Unlock()
 			return
 		}
 	}
 	// Check if already running
 	if _, exists := r.runningModes[modelID]; exists {
+		if forceCheck {
+			r.forcedChecks[modelID] = true
+		}
 		r.mu.Unlock()
 		return
+	}
+	if forceCheck {
+		r.forcedChecks[modelID] = true
 	}
 	r.queuedModels = append(r.queuedModels, modelID)
 	r.mu.Unlock()
@@ -791,6 +812,7 @@ func (r *ModelCheckRunner) enqueueModel(modelID string, logEnqueue bool) {
 		}
 	default:
 		r.mu.Lock()
+		delete(r.forcedChecks, modelID)
 		// Remove from queued list if queue is full
 		for i, id := range r.queuedModels {
 			if id == modelID {
@@ -811,6 +833,8 @@ func (r *ModelCheckRunner) checkSingleModel(modelID string, withRandomDelay bool
 		r.mu.Unlock()
 		return
 	}
+	forceCheck := r.forcedChecks[modelID]
+	delete(r.forcedChecks, modelID)
 	r.runningModes[modelID] = struct{}{}
 	r.mu.Unlock()
 
@@ -862,7 +886,7 @@ func (r *ModelCheckRunner) checkSingleModel(modelID string, withRandomDelay bool
 		model.LastStatus = &lastStatus.String
 	}
 
-	if !model.Enabled {
+	if !model.Enabled && !forceCheck {
 		r.logf("模型 %s 未启用，跳过检查", modelID)
 		return
 	}
@@ -889,13 +913,12 @@ func (r *ModelCheckRunner) checkSingleModel(modelID string, withRandomDelay bool
 		statusText = "错误"
 	}
 
-	timestamp := checkStartTime.Format("2006-01-02 15:04:05")
 	if content != "" {
-		r.logf("[%s] 开始巡检模型: %s, 巡检问题: %s, 响应状态: %d, 回复内容: %s, 完成巡检, 状态: %s",
-			timestamp, modelID, question, statusCode, content, statusText)
+		r.logf("开始巡检模型: %s, 巡检问题: %s, 响应状态: %d, 回复内容: %s, 完成巡检, 状态: %s",
+			modelID, question, statusCode, content, statusText)
 	} else {
-		r.logf("[%s] 开始巡检模型: %s, 巡检问题: %s, 响应状态: %d, 完成巡检, 状态: %s",
-			timestamp, modelID, question, statusCode, statusText)
+		r.logf("开始巡检模型: %s, 巡检问题: %s, 响应状态: %d, 完成巡检, 状态: %s",
+			modelID, question, statusCode, statusText)
 	}
 }
 
