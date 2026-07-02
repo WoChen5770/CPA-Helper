@@ -23,6 +23,7 @@ const (
 	modelCheckerLogComponent     = "model_checker"
 	modelCheckerLogRetainedFiles = 3
 	modelCheckerMaxInMemoryLogs  = 300
+	modelCheckerRequestAttempts  = 2
 )
 
 // ModelCheckRunner manages the model checking daemon and runs
@@ -962,8 +963,8 @@ func (r *ModelCheckRunner) checkSingleModelWithLog(ctx context.Context, model tr
 	if available {
 		result.Status = "available"
 	} else {
-		// 5xx status codes are errors, 4xx are unavailable
-		if *statusCode >= 500 && *statusCode < 600 {
+		// No HTTP response and 5xx status codes are errors; 4xx are unavailable.
+		if *statusCode == 0 || (*statusCode >= 500 && *statusCode < 600) {
 			result.Status = "error"
 		} else {
 			result.Status = "unavailable"
@@ -1012,35 +1013,40 @@ func (r *ModelCheckRunner) checkModelWithTestKeyWithLog(ctx context.Context, cfg
 		"max_tokens": 10,
 	}
 
-	response, body, err := doJSON(ctx, client, http.MethodPost, makeURL(cfg.ModelRequestURL, "/v1/chat/completions", nil), headers, payload)
-	if err != nil {
-		*statusCode = 0
-		return false
-	}
+	for attempt := 0; attempt < modelCheckerRequestAttempts; attempt++ {
+		response, body, err := doJSON(ctx, client, http.MethodPost, makeURL(cfg.ModelRequestURL, "/v1/chat/completions", nil), headers, payload)
+		if err != nil {
+			*statusCode = 0
+			if attempt == modelCheckerRequestAttempts-1 {
+				return false
+			}
+			continue
+		}
 
-	*statusCode = response.StatusCode
+		*statusCode = response.StatusCode
 
-	// Extract content field
-	var respData map[string]any
-	if err := json.Unmarshal(body, &respData); err == nil {
-		if choices, ok := respData["choices"].([]any); ok && len(choices) > 0 {
-			if choice, ok := choices[0].(map[string]any); ok {
-				if message, ok := choice["message"].(map[string]any); ok {
-					if c, ok := message["content"].(string); ok {
-						*content = c
+		// Extract content field from the final response attempt.
+		var respData map[string]any
+		if err := json.Unmarshal(body, &respData); err == nil {
+			if choices, ok := respData["choices"].([]any); ok && len(choices) > 0 {
+				if choice, ok := choices[0].(map[string]any); ok {
+					if message, ok := choice["message"].(map[string]any); ok {
+						if c, ok := message["content"].(string); ok {
+							*content = c
+						}
 					}
 				}
 			}
 		}
+
+		// 2xx status code means model is available.
+		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			return true
+		}
+
+		return false
 	}
 
-	// 2xx status code means model is available
-	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		return true
-	}
-
-	// 429 (rate limit) means unavailable due to throttling
-	// 502/503/504 (gateway errors) means error
 	return false
 }
 

@@ -234,10 +234,10 @@ const testQuestionsText = computed({
 const reversedLogs = computed(() => [...status.value.logs].reverse())
 
 // Compute real-time status for each model
-function getModelRuntimeStatus(modelId: string): { text: string; type: 'info' | 'success' | 'warning' | 'error' | 'default'; loading?: boolean } {
+function getModelRuntimeStatus(modelId: string): { text: string; type: 'info' | 'success' | 'warning' | 'error' | 'default' } {
   // Priority 1: Checking
   if (status.value.running_modes.includes(modelId)) {
-    return { text: '巡检中', type: 'info', loading: true }
+    return { text: '巡检中', type: 'info' }
   }
 
   // Priority 2: In queue
@@ -273,12 +273,6 @@ const columns: DataTableColumns<TrackedModel> = [
     width: 140,
     render: (row) => {
       const runtimeStatus = getModelRuntimeStatus(row.model_id)
-      if (runtimeStatus.loading) {
-        return h('div', { style: 'display: flex; align-items: center; gap: 6px;' }, [
-          h('span', { class: 'status-spinner' }, '⟳'),
-          h(NTag, { type: runtimeStatus.type, size: 'small' }, { default: () => runtimeStatus.text }),
-        ])
-      }
       return h(NTag, {
         type: runtimeStatus.type,
         size: 'small',
@@ -714,20 +708,4 @@ onUnmounted(() => {
   padding: 20px;
 }
 
-/* 状态加载动画 */
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.status-spinner {
-  display: inline-block;
-  animation: spin 1s linear infinite;
-  font-size: 16px;
-  color: #3b82f6;
-}
 </style>
