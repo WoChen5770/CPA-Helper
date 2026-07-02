@@ -727,18 +727,12 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 	}
 
 	// Perform check and collect log info
-	var requestURL string
 	var statusCode int
 	var content string
+	var question string
 	var finalStatus string
 
-	// Get app config for URL
-	cfg, err := r.app.loadConfig(ctx)
-	if err == nil {
-		requestURL = makeURL(cfg.ModelRequestURL, "/v1/chat/completions", nil)
-	}
-
-	result := r.checkSingleModelWithLog(ctx, model, globalCfg, &statusCode, &content)
+	result := r.checkSingleModelWithLog(ctx, model, globalCfg, &statusCode, &content, &question)
 	finalStatus = result.Status
 
 	// Update model status with check start time
@@ -756,11 +750,11 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 
 	timestamp := checkStartTime.Format("2006-01-02 15:04:05")
 	if content != "" {
-		r.logf("[%s] 开始巡检模型: %s, 请求 URL: %s, 响应状态: %d, 回复内容: %s, 完成巡检, 状态: %s",
-			timestamp, modelID, requestURL, statusCode, content, statusText)
+		r.logf("[%s] 开始巡检模型: %s, 巡检问题: %s, 响应状态: %d, 回复内容: %s, 完成巡检, 状态: %s",
+			timestamp, modelID, question, statusCode, content, statusText)
 	} else {
-		r.logf("[%s] 开始巡检模型: %s, 请求 URL: %s, 响应状态: %d, 完成巡检, 状态: %s",
-			timestamp, modelID, requestURL, statusCode, statusText)
+		r.logf("[%s] 开始巡检模型: %s, 巡检问题: %s, 响应状态: %d, 完成巡检, 状态: %s",
+			timestamp, modelID, question, statusCode, statusText)
 	}
 }
 
@@ -773,7 +767,7 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 
 
 
-func (r *ModelCheckRunner) checkSingleModelWithLog(ctx context.Context, model trackedModel, globalCfg ModelCheckerConfig, statusCode *int, content *string) checkModelResult {
+func (r *ModelCheckRunner) checkSingleModelWithLog(ctx context.Context, model trackedModel, globalCfg ModelCheckerConfig, statusCode *int, content *string, question *string) checkModelResult {
 	result := checkModelResult{
 		ModelID:    model.ModelID,
 		Provider:   model.Provider,
@@ -798,7 +792,7 @@ func (r *ModelCheckRunner) checkSingleModelWithLog(ctx context.Context, model tr
 	// Check model availability with test key
 	timeout := time.Duration(globalCfg.TimeoutSeconds) * time.Second
 
-	available := r.checkModelWithTestKeyWithLog(ctx, cfg, globalCfg.TestAPIKey, model.ModelID, timeout, statusCode, content)
+	available := r.checkModelWithTestKeyWithLog(ctx, cfg, globalCfg.TestAPIKey, model.ModelID, timeout, statusCode, content, question)
 
 	if available {
 		result.Status = "available"
@@ -815,7 +809,7 @@ func (r *ModelCheckRunner) checkSingleModelWithLog(ctx context.Context, model tr
 	return result
 }
 
-func (r *ModelCheckRunner) checkModelWithTestKeyWithLog(ctx context.Context, cfg AppConfig, testKey, modelID string, timeout time.Duration, statusCode *int, content *string) bool {
+func (r *ModelCheckRunner) checkModelWithTestKeyWithLog(ctx context.Context, cfg AppConfig, testKey, modelID string, timeout time.Duration, statusCode *int, content *string, question *string) bool {
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+testKey)
 	headers.Set("Content-Type", "application/json")
@@ -830,15 +824,16 @@ func (r *ModelCheckRunner) checkModelWithTestKeyWithLog(ctx context.Context, cfg
 	}
 
 	// Pick a random question from the configured questions
-	question := "你想一个数字，然后乘以3再减去3，直接给我结果" // default question
+	defaultQuestion := "你想一个数字，然后乘以3再减去3，直接给我结果"
+	*question = defaultQuestion // default question
 	if len(globalCfg.TestQuestions) > 0 {
-		question = globalCfg.TestQuestions[rand.Intn(len(globalCfg.TestQuestions))]
+		*question = globalCfg.TestQuestions[rand.Intn(len(globalCfg.TestQuestions))]
 	}
 
 	payload := map[string]any{
 		"model": modelID,
 		"messages": []map[string]string{
-			{"role": "user", "content": question},
+			{"role": "user", "content": *question},
 		},
 		"stream":     false,
 		"max_tokens": 10,
