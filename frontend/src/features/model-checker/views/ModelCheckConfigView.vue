@@ -366,6 +366,23 @@ let pollTimer: number | null = null
 async function loadData() {
   loading.value = true
   try {
+    const [statusRes, modelsRes] = await Promise.all([
+      getModelCheckerStatus(),
+      getTrackedModels(),
+    ])
+    status.value = statusRes
+    trackedModels.value = modelsRes
+    syncCronDrafts(modelsRes)
+  } catch (error) {
+    message.error(errorText(error, '加载数据失败', 'Failed to load model checker data'))
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadInitialData() {
+  loading.value = true
+  try {
     const [statusRes, modelsRes, settingsRes, availableRes] = await Promise.all([
       getModelCheckerStatus(),
       getTrackedModels(),
@@ -440,6 +457,14 @@ async function handleAddModel() {
     message.success('模型已添加到监控')
     selectedModelId.value = ''
     await loadData()
+
+    // Reload available models to update the dropdown
+    try {
+      const availableRes = await listAvailableModels()
+      availableModels.value = availableRes.models
+    } catch {
+      // Silently fail if available models reload fails
+    }
   } catch (error) {
     message.error(errorText(error, '添加失败', 'Failed to add model'))
   }
@@ -512,7 +537,7 @@ async function handleDelete(modelId: string) {
 }
 
 onMounted(() => {
-  void loadData()
+  void loadInitialData()
   pollTimer = window.setInterval(() => {
     void loadData()
   }, 3000)
