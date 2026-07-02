@@ -53,6 +53,10 @@ export async function deleteTrackedModel(modelId: string): Promise<void> {
   return apiClient.delete(`/model-checker/models/${encodeURIComponent(modelId)}`)
 }
 
+export async function checkTrackedModel(modelId: string): Promise<void> {
+  return apiClient.post<void>(`/model-checker/models/${encodeURIComponent(modelId)}/check`)
+}
+
 export async function startModelSchedule(modelId: string): Promise<void> {
   return apiClient.post<void>(`/model-checker/models/${encodeURIComponent(modelId)}/start`)
 }

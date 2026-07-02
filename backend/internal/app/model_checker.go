@@ -333,6 +333,12 @@ func (a *App) handleModelChecker(w http.ResponseWriter, r *http.Request) error {
 		return methodNotAllowed()
 	case len(parts) >= 2 && parts[0] == "models":
 		modelID := strings.Join(parts[1:], "/")
+		if strings.HasSuffix(modelID, "/check") {
+			if err := requireMethod(r, http.MethodPost); err != nil {
+				return err
+			}
+			return a.checkTrackedModel(w, r, strings.TrimSuffix(modelID, "/check"))
+		}
 		if strings.HasSuffix(modelID, "/start") {
 			if err := requireMethod(r, http.MethodPost); err != nil {
 				return err
@@ -572,6 +578,12 @@ func (a *App) deleteTrackedModel(w http.ResponseWriter, r *http.Request, modelID
 	return nil
 }
 
+func (a *App) checkTrackedModel(w http.ResponseWriter, r *http.Request, modelID string) error {
+	go a.modelCheckRunner.CheckSingleModelNow(modelID)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "已开始巡检"})
+	return nil
+}
+
 func (a *App) startModelSchedule(w http.ResponseWriter, r *http.Request, modelID string) error {
 	if err := a.modelCheckRunner.StartModelSchedule(r.Context(), modelID); err != nil {
 		return err
@@ -667,6 +679,15 @@ func (r *ModelCheckRunner) StopModelSchedule(modelID string) {
 
 // CheckSingleModel performs a check for a single model
 func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
+	r.checkSingleModel(modelID, true)
+}
+
+// CheckSingleModelNow performs an immediate manual check for a single model
+func (r *ModelCheckRunner) CheckSingleModelNow(modelID string) {
+	r.checkSingleModel(modelID, false)
+}
+
+func (r *ModelCheckRunner) checkSingleModel(modelID string, withRandomDelay bool) {
 	r.mu.Lock()
 	if _, exists := r.runningModes[modelID]; exists {
 		r.mu.Unlock()
@@ -681,9 +702,11 @@ func (r *ModelCheckRunner) CheckSingleModel(modelID string) {
 		r.mu.Unlock()
 	}()
 
-	// Random delay between 1-10 seconds to avoid fixed intervals
-	delay := time.Duration(1+rand.Intn(10)) * time.Second
-	time.Sleep(delay)
+	if withRandomDelay {
+		// Random delay between 1-10 seconds to avoid fixed intervals
+		delay := time.Duration(1+rand.Intn(10)) * time.Second
+		time.Sleep(delay)
+	}
 
 	// Record check start time
 	checkStartTime := time.Now().UTC()

@@ -23,16 +23,9 @@
         </div>
       </NCard>
 
-      <!-- 全局控制卡片 -->
+      <!-- 全局设置 -->
       <NCard title="全局设置">
         <NSpace vertical :size="12">
-          <NSpace align="center">
-            <span>Daemon 状态：</span>
-            <NTag :type="status.daemon_running ? 'success' : 'default'">
-              {{ status.daemon_running ? '运行中' : '已停止' }}
-            </NTag>
-          </NSpace>
-
           <NForm label-placement="left" label-width="120">
             <NFormItem label="超时时间(秒)">
               <NInputNumber
@@ -45,8 +38,6 @@
             <NFormItem label="测试 API Key">
               <NInput
                 v-model:value="settings.test_api_key"
-                type="password"
-                show-password-on="click"
                 placeholder="sk-ant-..."
                 @blur="handleUpdateSettings"
               />
@@ -68,33 +59,7 @@
           </NForm>
 
           <NSpace>
-            <NButton
-              type="primary"
-              :loading="loading"
-              @click="handleRunOnce"
-            >
-              立即检查所有模型
-            </NButton>
-            <NButton
-              v-if="!status.daemon_running"
-              type="success"
-              :loading="loading"
-              @click="handleStartDaemon"
-            >
-              启动 Daemon
-            </NButton>
-            <NButton
-              v-else
-              type="warning"
-              :loading="loading"
-              @click="handleStopDaemon"
-            >
-              停止 Daemon
-            </NButton>
-            <NButton
-              secondary
-              @click="handleClearLogs"
-            >
+            <NButton secondary @click="handleClearLogs">
               清除日志
             </NButton>
           </NSpace>
@@ -137,7 +102,7 @@
 
     <!-- 添加模型对话框 -->
     <NModal v-model:show="showAddModel" preset="dialog" title="添加模型到监控">
-      <NForm ref="formRef" :model="formModel" label-placement="left" label-width="140">
+      <NForm :model="formModel" label-placement="left" label-width="140">
         <NFormItem label="模型 ID" path="model_id" required>
           <NInput v-model:value="formModel.model_id" placeholder="例如: claude-3-5-sonnet-20241022" />
         </NFormItem>
@@ -153,25 +118,6 @@
         <NSpace>
           <NButton @click="showAddModel = false">取消</NButton>
           <NButton type="primary" @click="handleAddModel">添加</NButton>
-        </NSpace>
-      </template>
-    </NModal>
-
-    <!-- 编辑模型对话框 -->
-    <NModal v-model:show="showEditModel" preset="dialog" title="编辑模型配置">
-      <NForm ref="editFormRef" :model="editFormModel" label-placement="left" label-width="140">
-        <NFormItem label="启用" path="enabled">
-          <NSwitch v-model:value="editFormModel.enabled" />
-        </NFormItem>
-        <NFormItem label="Cron 表达式" path="schedule_cron">
-          <NInput v-model:value="editFormModel.schedule_cron" placeholder="例如: 0 */6 * * * (每6小时)" />
-        </NFormItem>
-      </NForm>
-
-      <template #action>
-        <NSpace>
-          <NButton @click="showEditModel = false">取消</NButton>
-          <NButton type="primary" @click="handleUpdateModel">保存</NButton>
         </NSpace>
       </template>
     </NModal>
@@ -196,6 +142,7 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import type { TrackedModel, ModelCheckerStatus, ModelCheckerConfig } from '@/shared/types/api'
+import { useI18n } from '@/shared/i18n'
 import {
   getModelCheckerSettings,
   updateModelCheckerSettings,
@@ -204,12 +151,12 @@ import {
   addTrackedModel,
   updateTrackedModel,
   deleteTrackedModel,
-  startModelSchedule,
-  stopModelSchedule,
+  checkTrackedModel,
   clearModelCheckerLogs,
 } from '../api/modelCheckerApi'
 
 const message = useMessage()
+const { errorText } = useI18n()
 
 const loading = ref(false)
 const status = ref<ModelCheckerStatus>({
@@ -237,8 +184,10 @@ const settings = ref<ModelCheckerConfig>({
   test_api_key: '',
   test_questions: [],
 })
+const cronDrafts = ref<Record<string, string>>({})
+const savingCronModelId = ref<string | null>(null)
+const checkingModelIds = ref<Record<string, boolean>>({})
 
-// Convert test_questions array to/from textarea text
 const testQuestionsText = computed({
   get: () => (settings.value.test_questions || []).join('\n'),
   set: (val: string) => {
@@ -246,24 +195,13 @@ const testQuestionsText = computed({
       .split('\n')
       .map(line => line.trim())
       .filter(line => line.length > 0)
-  }
+  },
 })
 
 const showAddModel = ref(false)
 const formModel = ref({
   model_id: '',
   provider: '',
-  schedule_cron: '0 */6 * * *',
-})
-
-const showEditModel = ref(false)
-const editFormModel = ref<{
-  model_id: string
-  enabled: boolean
-  schedule_cron: string
-}>({
-  model_id: '',
-  enabled: true,
   schedule_cron: '0 */6 * * *',
 })
 
@@ -294,9 +232,9 @@ const columns: DataTableColumns<TrackedModel> = [
     render: (row) => {
       if (!row.last_status) return '-'
       const statusMap = {
-        'available': { text: '正常', type: 'success' as const },
-        'unavailable': { text: '异常', type: 'warning' as const },
-        'error': { text: '错误', type: 'error' as const },
+        available: { text: '正常', type: 'success' as const },
+        unavailable: { text: '异常', type: 'warning' as const },
+        error: { text: '错误', type: 'error' as const },
       }
       const config = statusMap[row.last_status as keyof typeof statusMap] || { text: row.last_status, type: 'default' as const }
       return h(NTag, { type: config.type, size: 'small' }, { default: () => config.text })
@@ -305,39 +243,79 @@ const columns: DataTableColumns<TrackedModel> = [
   {
     title: 'Cron',
     key: 'schedule_cron',
-    width: 120,
+    width: 220,
+    render: (row) => h(NInput, {
+      value: cronDrafts.value[row.model_id] ?? row.schedule_cron,
+      size: 'small',
+      disabled: savingCronModelId.value === row.model_id,
+      placeholder: '例如: 0 */6 * * *',
+      onUpdateValue: (value: string) => updateCronDraft(row.model_id, value),
+      onBlur: () => {
+        void handleSaveCron(row)
+      },
+      onKeydown: (event: KeyboardEvent) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          void handleSaveCron(row)
+          return
+        }
+        if (event.key === 'Escape') {
+          resetCronDraft(row)
+        }
+      },
+    }),
   },
   {
     title: '最后巡检',
     key: 'last_checked_at',
-    width: 160,
-    render: (row) => row.last_checked_at ? new Date(row.last_checked_at).toLocaleString('zh-CN') : '-',
+    width: 170,
+    render: (row) => formatDateTime(row.last_checked_at),
+  },
+  {
+    title: '最近可用时间',
+    key: 'last_available_at',
+    width: 170,
+    render: (row) => formatDateTime(row.last_available_at),
+  },
+  {
+    title: '下次巡检时间',
+    key: 'next_run_at',
+    width: 170,
+    render: (row) => formatDateTime(row.next_run_at),
   },
   {
     title: '操作',
     key: 'actions',
-    width: 200,
+    width: 170,
     render: (row) => h(NSpace, { size: 'small' }, {
       default: () => [
         h(NButton, {
           size: 'small',
-          onClick: () => handleEdit(row),
-        }, { default: () => '编辑' }),
-        h(NButton, {
-          size: 'small',
-          onClick: () => handleCheck(row.model_id),
-        }, { default: () => '立即检查' }),
+          loading: checkingModelIds.value[row.model_id] === true,
+          disabled: checkingModelIds.value[row.model_id] === true,
+          onClick: () => {
+            void handleCheck(row.model_id)
+          },
+        }, { default: () => '立即巡检' }),
         h(NButton, {
           size: 'small',
           type: 'error',
-          onClick: () => handleDelete(row.model_id),
+          onClick: () => {
+            void handleDelete(row.model_id)
+          },
         }, { default: () => '移除' }),
       ],
     }),
   },
 ]
 
-// Helper function to determine log line color class
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) {
+    return '-'
+  }
+  return new Date(value).toLocaleString('zh-CN')
+}
+
 function getLogClass(log: string): string {
   if (log.includes('状态: 正常') || log.includes('available')) {
     return 'log-success'
@@ -351,9 +329,29 @@ function getLogClass(log: string): string {
   return ''
 }
 
+function syncCronDrafts(models: TrackedModel[]) {
+  const nextDrafts: Record<string, string> = {}
+  models.forEach((model) => {
+    nextDrafts[model.model_id] = cronDrafts.value[model.model_id] ?? model.schedule_cron
+  })
+  cronDrafts.value = nextDrafts
+}
+
+function updateCronDraft(modelId: string, value: string) {
+  cronDrafts.value = {
+    ...cronDrafts.value,
+    [modelId]: value,
+  }
+}
+
+function resetCronDraft(row: TrackedModel) {
+  updateCronDraft(row.model_id, row.schedule_cron)
+}
+
 let pollTimer: number | null = null
 
 async function loadData() {
+  loading.value = true
   try {
     const [statusRes, modelsRes, settingsRes] = await Promise.all([
       getModelCheckerStatus(),
@@ -362,9 +360,12 @@ async function loadData() {
     ])
     status.value = statusRes
     trackedModels.value = modelsRes
+    syncCronDrafts(modelsRes)
     settings.value = settingsRes
-  } catch (err: any) {
-    message.error(err.message || '加载数据失败')
+  } catch (error) {
+    message.error(errorText(error, '加载数据失败', 'Failed to load model checker data'))
+  } finally {
+    loading.value = false
   }
 }
 
@@ -377,47 +378,8 @@ async function handleUpdateSettings() {
     })
     settings.value = updated
     message.success('设置已保存')
-  } catch (err: any) {
-    message.error(err.message || '保存失败')
-  }
-}
-
-async function handleRunOnce() {
-  loading.value = true
-  try {
-    // TODO: 实现立即检查所有模型的功能
-    message.warning('该功能暂未实现')
-    loadData()
-  } catch (err: any) {
-    message.error(err.message || '启动失败')
-  } finally {
-    loading.value = false
-  }
-}
-
-async function handleStartDaemon() {
-  loading.value = true
-  try {
-    // TODO: 实现启动 Daemon 的功能
-    message.warning('该功能暂未实现')
-    loadData()
-  } catch (err: any) {
-    message.error(err.message || '启动失败')
-  } finally {
-    loading.value = false
-  }
-}
-
-async function handleStopDaemon() {
-  loading.value = true
-  try {
-    // TODO: 实现停止 Daemon 的功能
-    message.warning('该功能暂未实现')
-    loadData()
-  } catch (err: any) {
-    message.error(err.message || '停止失败')
-  } finally {
-    loading.value = false
+  } catch (error) {
+    message.error(errorText(error, '保存失败', 'Failed to save settings'))
   }
 }
 
@@ -425,9 +387,9 @@ async function handleClearLogs() {
   try {
     await clearModelCheckerLogs()
     message.success('日志已清除')
-    loadData()
-  } catch (err: any) {
-    message.error(err.message || '清除失败')
+    await loadData()
+  } catch (error) {
+    message.error(errorText(error, '清除失败', 'Failed to clear logs'))
   }
 }
 
@@ -445,32 +407,36 @@ async function handleAddModel() {
       provider: '',
       schedule_cron: '0 */6 * * *',
     }
-    loadData()
-  } catch (err: any) {
-    message.error(err.message || '添加失败')
+    await loadData()
+  } catch (error) {
+    message.error(errorText(error, '添加失败', 'Failed to add model'))
   }
 }
 
-function handleEdit(row: TrackedModel) {
-  editFormModel.value = {
-    model_id: row.model_id,
-    enabled: row.enabled,
-    schedule_cron: row.schedule_cron,
+async function handleSaveCron(row: TrackedModel) {
+  const draft = (cronDrafts.value[row.model_id] ?? row.schedule_cron).trim()
+  if (!draft) {
+    message.error('Cron 表达式不能为空')
+    resetCronDraft(row)
+    return
   }
-  showEditModel.value = true
-}
+  if (draft === row.schedule_cron) {
+    resetCronDraft(row)
+    return
+  }
 
-async function handleUpdateModel() {
+  savingCronModelId.value = row.model_id
   try {
-    await updateTrackedModel(editFormModel.value.model_id, {
-      enabled: editFormModel.value.enabled,
-      schedule_cron: editFormModel.value.schedule_cron,
+    await updateTrackedModel(row.model_id, {
+      schedule_cron: draft,
     })
-    message.success('配置已更新')
-    showEditModel.value = false
-    loadData()
-  } catch (err: any) {
-    message.error(err.message || '更新失败')
+    message.success('Cron 已更新')
+    await loadData()
+  } catch (error) {
+    resetCronDraft(row)
+    message.error(errorText(error, 'Cron 更新失败', 'Failed to update cron'))
+  } finally {
+    savingCronModelId.value = null
   }
 }
 
@@ -478,19 +444,28 @@ async function handleToggleEnabled(modelId: string, enabled: boolean) {
   try {
     await updateTrackedModel(modelId, { enabled })
     message.success(enabled ? '已启用' : '已停用')
-    loadData()
-  } catch (err: any) {
-    message.error(err.message || '操作失败')
+    await loadData()
+  } catch (error) {
+    message.error(errorText(error, '操作失败', 'Failed to update model status'))
   }
 }
 
 async function handleCheck(modelId: string) {
+  checkingModelIds.value = {
+    ...checkingModelIds.value,
+    [modelId]: true,
+  }
   try {
-    await startModelSchedule(modelId)
-    message.success('已启动调度')
-    loadData()
-  } catch (err: any) {
-    message.error(err.message || '启动失败')
+    await checkTrackedModel(modelId)
+    message.success('已开始巡检')
+    await loadData()
+  } catch (error) {
+    message.error(errorText(error, '巡检启动失败', 'Failed to start inspection'))
+  } finally {
+    checkingModelIds.value = {
+      ...checkingModelIds.value,
+      [modelId]: false,
+    }
   }
 }
 
@@ -498,16 +473,16 @@ async function handleDelete(modelId: string) {
   try {
     await deleteTrackedModel(modelId)
     message.success('模型已从监控移除')
-    loadData()
-  } catch (err: any) {
-    message.error(err.message || '移除失败')
+    await loadData()
+  } catch (error) {
+    message.error(errorText(error, '移除失败', 'Failed to remove model'))
   }
 }
 
 onMounted(() => {
-  loadData()
+  void loadData()
   pollTimer = window.setInterval(() => {
-    loadData()
+    void loadData()
   }, 3000)
 })
 
