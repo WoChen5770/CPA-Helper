@@ -32,14 +32,12 @@
                 v-model:value="settings.timeout_seconds"
                 :min="1"
                 placeholder="30"
-                @blur="handleUpdateSettings"
               />
             </NFormItem>
             <NFormItem label="测试 API Key">
               <NInput
                 v-model:value="settings.test_api_key"
                 placeholder="sk-ant-..."
-                @blur="handleUpdateSettings"
               />
             </NFormItem>
             <NFormItem label="巡检问题">
@@ -48,7 +46,6 @@
                 type="textarea"
                 placeholder="每行一个问题，巡检时随机选择&#10;例如：&#10;你好&#10;1+1=?&#10;帮我写一首诗"
                 :rows="4"
-                @blur="handleUpdateSettings"
               />
               <template #feedback>
                 <span style="font-size: 12px; color: #999;">
@@ -59,6 +56,9 @@
           </NForm>
 
           <NSpace>
+            <NButton type="primary" :loading="savingSettings" @click="handleUpdateSettings">
+              保存设置
+            </NButton>
             <NButton secondary @click="handleClearLogs">
               清除日志
             </NButton>
@@ -68,7 +68,7 @@
           <NCard title="实时日志" size="small">
             <div class="logs-container">
               <div
-                v-for="(log, index) in status.logs"
+                v-for="(log, index) in reversedLogs"
                 :key="index"
                 :class="['log-line', getLogClass(log)]"
               >
@@ -159,6 +159,7 @@ const message = useMessage()
 const { errorText } = useI18n()
 
 const loading = ref(false)
+const savingSettings = ref(false)
 const status = ref<ModelCheckerStatus>({
   running: false,
   running_modes: [],
@@ -197,6 +198,8 @@ const testQuestionsText = computed({
       .filter(line => line.length > 0)
   },
 })
+
+const reversedLogs = computed(() => [...status.value.logs].reverse())
 
 const showAddModel = ref(false)
 const formModel = ref({
@@ -317,6 +320,22 @@ function formatDateTime(value: string | null | undefined): string {
 }
 
 function getLogClass(log: string): string {
+  // 优先按状态码判断
+  const statusCodeMatch = log.match(/响应状态:\s*(\d+)/)
+  if (statusCodeMatch && statusCodeMatch[1]) {
+    const code = parseInt(statusCodeMatch[1], 10)
+    if (code >= 200 && code < 300) {
+      return 'log-success'
+    }
+    if (code >= 400 && code < 500) {
+      return 'log-warning'
+    }
+    if (code >= 500 && code < 600) {
+      return 'log-error'
+    }
+  }
+
+  // 回退到文本判断
   if (log.includes('状态: 正常') || log.includes('available')) {
     return 'log-success'
   }
@@ -370,6 +389,7 @@ async function loadData() {
 }
 
 async function handleUpdateSettings() {
+  savingSettings.value = true
   try {
     const updated = await updateModelCheckerSettings({
       timeout_seconds: settings.value.timeout_seconds,
@@ -380,6 +400,8 @@ async function handleUpdateSettings() {
     message.success('设置已保存')
   } catch (error) {
     message.error(errorText(error, '保存失败', 'Failed to save settings'))
+  } finally {
+    savingSettings.value = false
   }
 }
 

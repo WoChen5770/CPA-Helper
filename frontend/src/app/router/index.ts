@@ -23,7 +23,7 @@ function stringMeta(to: { meta: Record<string, unknown> }, key: string): string 
 function detectBasePath(): string {
   const path = window.location.pathname
   // 匹配第一段路径（不包括根路径）
-  const match = path.match(/^\/([^\/]+)/)
+  const match = path.match(/^\/([^/]+)/)
   if (match && match[1]) {
     const firstSegment = match[1]
     // 排除已知的根路由路径（这些是应用路由，不是 base path）
