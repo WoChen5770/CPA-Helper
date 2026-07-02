@@ -187,6 +187,10 @@ func (r *ModelCheckRunner) Status() modelCheckStatusResponse {
 		lastFinished = &s
 	}
 
+	// Calculate real-time stats from database
+	ctx := context.Background()
+	stats := r.calculateStats(ctx)
+
 	return modelCheckStatusResponse{
 		Running:        r.running,
 		RunningModes:   modes,
@@ -196,9 +200,37 @@ func (r *ModelCheckRunner) Status() modelCheckStatusResponse {
 		Mode:           r.mode,
 		LastStartedAt:  lastStarted,
 		LastFinishedAt: lastFinished,
-		Stats:          r.stats,
+		Stats:          stats,
 		Logs:           append([]string{}, r.logs...),
 	}
+}
+
+func (r *ModelCheckRunner) calculateStats(ctx context.Context) modelCheckStats {
+	stats := modelCheckStats{}
+
+	// Count total models
+	row := r.app.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM model_checker_tracked_models
+	`)
+	_ = row.Scan(&stats.TotalModels)
+
+	// Count by status
+	row = r.app.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM model_checker_tracked_models WHERE last_status = 'available'
+	`)
+	_ = row.Scan(&stats.AvailableModels)
+
+	row = r.app.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM model_checker_tracked_models WHERE last_status = 'unavailable'
+	`)
+	_ = row.Scan(&stats.UnavailableModels)
+
+	row = r.app.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM model_checker_tracked_models WHERE last_status = 'error'
+	`)
+	_ = row.Scan(&stats.ErrorModels)
+
+	return stats
 }
 
 func (r *ModelCheckRunner) logf(format string, args ...any) {

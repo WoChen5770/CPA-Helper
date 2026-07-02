@@ -1,61 +1,96 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="AutoImportSettings">
-    <option name="autoReloadType" value="SELECTIVE" />
+    <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
     <list default="true" id="d5cb55fe-8fe4-4969-bb12-44b10ce376b2" name="更改" comment="">
-      <change beforePath="$PROJECT_DIR$/README.zh-CN.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.zh-CN.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/features/settings/views/SettingsView.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/features/settings/views/SettingsView.vue" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/shared/types/api.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/shared/types/api.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/features/model-checker/views/ModelCheckConfigView.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/features/model-checker/views/ModelCheckConfigView.vue" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
-  <component name="GOROOT" url="file://$USER_HOME$/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.0.windows-amd64" />
+  <component name="GOROOT" url="file://D:/JetBrains/sdk/go/go1.26.4" />
   <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="main" />
+      </map>
+    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
-  "lastFilter": {
-    "state": "OPEN",
-    "assignee": "WoChen5770"
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;WoChen5770&quot;
   }
-}]]></component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "https://github.com/WoChen5770/CPA-Helper",
-    "accountId": "795e9b62-37ce-46f7-8f04-97a5e5b6f3a2"
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/WoChen5770/CPA-Helper&quot;,
+    &quot;accountId&quot;: &quot;795e9b62-37ce-46f7-8f04-97a5e5b6f3a2&quot;
   }
-}]]></component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "associatedIndex": 5,
-  "fromUser": false
-}]]></component>
+}</component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 5,
+  &quot;fromUser&quot;: false
+}</component>
   <component name="ProjectId" id="3Fsu78CN35H63H1JZjSc9vdZwRY" />
+  <component name="ProjectLevelVcsManager">
+    <OptionsSetting value="false" id="Update" />
+  </component>
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "RunOnceActivity.GoLinterPluginOnboardingV2": "true",
+    "RunOnceActivity.GoLinterPluginStorageMigration": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.go.analysis.ui.options.defaults": "true",
     "RunOnceActivity.go.formatter.settings.were.checked": "true",
+    "RunOnceActivity.go.modules.go.list.on.any.changes.was.set": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
     "codeWithMe.voiceChat.enabledByDefault": "false",
-    "git-widget-placeholder": "main",
+    "git-widget-placeholder": "dev",
     "go.sdk.automatically.set": "true",
     "kotlin-language-version-configured": "true",
+    "last_opened_file_path": "E:/IdeaProjects/github/CPA-Helper",
     "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.standard": "true",
     "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.standard": "",
     "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "preferences.language.and.region",
-    "ts.external.directory.path": "D:\\JetBrains\\IntelliJ IDEA\\plugins\\javascript-plugin\\jsLanguageServicesImpl\\external"
+    "project.structure.last.edited": "模块",
+    "project.structure.proportion": "0.0",
+    "project.structure.side.proportion": "0.0",
+    "settings.editor.selected.configurable": "go.sdk",
+    "ts.external.directory.path": "D:\\JetBrains\\GoLand\\plugins\\javascript-plugin\\jsLanguageServicesImpl\\external"
   }
 }]]></component>
+  <component name="RunManager">
+    <configuration name="go build cpa-helper/backend/cmd/cpa-helper" type="GoApplicationRunConfiguration" factoryName="Go Application" nameIsGenerated="true">
+      <module name="CPA-Helper" />
+      <working_directory value="$PROJECT_DIR$/backend" />
+      <kind value="PACKAGE" />
+      <package value="cpa-helper/backend/cmd/cpa-helper" />
+      <directory value="$PROJECT_DIR$" />
+      <method v="2" />
+    </configuration>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-gosdk-72a9cf600ed8-3dd3895e5e08-org.jetbrains.plugins.go.sharedIndexes.bundled-GO-261.25134.147" />
+        <option value="bundled-js-predefined-d6986cc7102b-31caf2ab9e3c-JavaScript-GO-261.25134.147" />
+      </set>
+    </attachedChunks>
+  </component>
   <component name="TaskManager">
     <task active="true" id="Default" summary="默认任务">
       <changelist id="d5cb55fe-8fe4-4969-bb12-44b10ce376b2" name="更改" comment="" />
@@ -63,7 +98,8 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1782875928814</updated>
-      <workItem from="1782875930502" duration="13727000" />
+      <workItem from="1782875930502" duration="14822000" />
+      <workItem from="1782955514004" duration="109000" />
     </task>
     <servers />
   </component>
@@ -84,5 +120,9 @@
         </entry>
       </map>
     </option>
+  </component>
+  <component name="XSLT-Support.FileAssociations.UIState">
+    <expand />
+    <select />
   </component>
 </project>

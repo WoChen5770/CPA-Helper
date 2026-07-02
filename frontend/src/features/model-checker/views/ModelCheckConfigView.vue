@@ -82,14 +82,24 @@
         </NSpace>
       </NCard>
 
+      <!-- 添加模型 -->
+      <NCard title="添加到监控">
+        <NSpace :size="12">
+          <NSelect
+            v-model:value="selectedModelId"
+            :options="availableModelOptions"
+            placeholder="选择模型"
+            filterable
+            style="width: 400px"
+          />
+          <NButton type="primary" :disabled="!selectedModelId" @click="handleAddModel">
+            添加
+          </NButton>
+        </NSpace>
+      </NCard>
+
       <!-- 已监控模型列表 -->
       <NCard title="已监控模型">
-        <template #header-extra>
-          <NButton type="primary" size="small" @click="showAddModel = true">
-            添加模型
-          </NButton>
-        </template>
-
         <NDataTable
           :columns="columns"
           :data="trackedModels"
@@ -99,28 +109,6 @@
         />
       </NCard>
     </NSpace>
-
-    <!-- 添加模型对话框 -->
-    <NModal v-model:show="showAddModel" preset="dialog" title="添加模型到监控">
-      <NForm :model="formModel" label-placement="left" label-width="140">
-        <NFormItem label="模型 ID" path="model_id" required>
-          <NInput v-model:value="formModel.model_id" placeholder="例如: claude-3-5-sonnet-20241022" />
-        </NFormItem>
-        <NFormItem label="Provider" path="provider">
-          <NInput v-model:value="formModel.provider" placeholder="例如: anthropic" />
-        </NFormItem>
-        <NFormItem label="Cron 表达式" path="schedule_cron">
-          <NInput v-model:value="formModel.schedule_cron" placeholder="例如: 0 */6 * * * (每6小时)" />
-        </NFormItem>
-      </NForm>
-
-      <template #action>
-        <NSpace>
-          <NButton @click="showAddModel = false">取消</NButton>
-          <NButton type="primary" @click="handleAddModel">添加</NButton>
-        </NSpace>
-      </template>
-    </NModal>
   </div>
 </template>
 
@@ -132,16 +120,16 @@ import {
   NButton,
   NTag,
   NDataTable,
-  NModal,
   NForm,
   NFormItem,
   NInput,
   NInputNumber,
   NSwitch,
+  NSelect,
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
-import type { TrackedModel, ModelCheckerStatus, ModelCheckerConfig } from '@/shared/types/api'
+import type { TrackedModel, ModelCheckerStatus, ModelCheckerConfig, AvailableModel } from '@/shared/types/api'
 import { useI18n } from '@/shared/i18n'
 import {
   getModelCheckerSettings,
@@ -154,6 +142,7 @@ import {
   checkTrackedModel,
   clearModelCheckerLogs,
 } from '../api/modelCheckerApi'
+import { listAvailableModels } from '@/features/models/api/availableModelsApi'
 
 const message = useMessage()
 const { errorText } = useI18n()
@@ -180,6 +169,8 @@ const status = ref<ModelCheckerStatus>({
   logs: [],
 })
 const trackedModels = ref<TrackedModel[]>([])
+const availableModels = ref<AvailableModel[]>([])
+const selectedModelId = ref('')
 const settings = ref<ModelCheckerConfig>({
   timeout_seconds: 30,
   test_api_key: '',
@@ -188,6 +179,16 @@ const settings = ref<ModelCheckerConfig>({
 const cronDrafts = ref<Record<string, string>>({})
 const savingCronModelId = ref<string | null>(null)
 const checkingModelIds = ref<Record<string, boolean>>({})
+
+const availableModelOptions = computed(() => {
+  const trackedIds = new Set(trackedModels.value.map(m => m.model_id))
+  return availableModels.value
+    .filter(m => !trackedIds.has(m.id))
+    .map(m => ({
+      label: m.id,
+      value: m.id,
+    }))
+})
 
 const testQuestionsText = computed({
   get: () => (settings.value.test_questions || []).join('\n'),
@@ -200,13 +201,6 @@ const testQuestionsText = computed({
 })
 
 const reversedLogs = computed(() => [...status.value.logs].reverse())
-
-const showAddModel = ref(false)
-const formModel = ref({
-  model_id: '',
-  provider: '',
-  schedule_cron: '0 */6 * * *',
-})
 
 const columns: DataTableColumns<TrackedModel> = [
   {
@@ -372,15 +366,17 @@ let pollTimer: number | null = null
 async function loadData() {
   loading.value = true
   try {
-    const [statusRes, modelsRes, settingsRes] = await Promise.all([
+    const [statusRes, modelsRes, settingsRes, availableRes] = await Promise.all([
       getModelCheckerStatus(),
       getTrackedModels(),
       getModelCheckerSettings(),
+      listAvailableModels(),
     ])
     status.value = statusRes
     trackedModels.value = modelsRes
     syncCronDrafts(modelsRes)
     settings.value = settingsRes
+    availableModels.value = availableRes.models
   } catch (error) {
     message.error(errorText(error, '加载数据失败', 'Failed to load model checker data'))
   } finally {
@@ -416,19 +412,33 @@ async function handleClearLogs() {
 }
 
 async function handleAddModel() {
-  if (!formModel.value.model_id) {
-    message.error('请填写模型 ID')
+  if (!selectedModelId.value) {
+    message.error('请选择模型')
     return
   }
   try {
-    await addTrackedModel(formModel.value)
-    message.success('模型已添加到监控')
-    showAddModel.value = false
-    formModel.value = {
-      model_id: '',
-      provider: '',
-      schedule_cron: '0 */6 * * *',
+    // Find the selected model to get provider info
+    const selectedModel = availableModels.value.find(m => m.id === selectedModelId.value)
+
+    // Try to get provider from price info, or extract from model id, or default to empty
+    let provider = ''
+    if (selectedModel?.price?.provider) {
+      provider = selectedModel.price.provider
+    } else {
+      // Try to extract from model id (e.g., "anthropic/claude-3-5-sonnet" -> "anthropic")
+      const parts = selectedModelId.value.split('/')
+      if (parts.length > 1 && parts[0]) {
+        provider = parts[0]
+      }
     }
+
+    await addTrackedModel({
+      model_id: selectedModelId.value,
+      provider: provider,
+      schedule_cron: '0 */6 * * *',
+    })
+    message.success('模型已添加到监控')
+    selectedModelId.value = ''
     await loadData()
   } catch (error) {
     message.error(errorText(error, '添加失败', 'Failed to add model'))
