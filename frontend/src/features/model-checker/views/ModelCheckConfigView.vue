@@ -46,6 +46,7 @@
                 type="textarea"
                 placeholder="每行一个问题，巡检时随机选择&#10;例如：&#10;你好&#10;1+1=?&#10;帮我写一首诗"
                 :rows="4"
+                @keydown.enter.stop
               />
               <template #feedback>
                 <span style="font-size: 12px; color: #999;">
@@ -63,50 +64,50 @@
               清除日志
             </NButton>
           </NSpace>
-
-          <!-- 实时日志 -->
-          <NCard title="实时日志" size="small">
-            <div class="logs-container">
-              <div
-                v-for="(log, index) in reversedLogs"
-                :key="index"
-                :class="['log-line', getLogClass(log)]"
-              >
-                {{ log }}
-              </div>
-              <div v-if="status.logs.length === 0" class="empty-logs">
-                暂无日志
-              </div>
-            </div>
-          </NCard>
-        </NSpace>
-      </NCard>
-
-      <!-- 添加模型 -->
-      <NCard title="添加到监控">
-        <NSpace :size="12">
-          <NSelect
-            v-model:value="selectedModelId"
-            :options="availableModelOptions"
-            placeholder="选择模型"
-            filterable
-            style="width: 400px"
-          />
-          <NButton type="primary" :disabled="!selectedModelId" @click="handleAddModel">
-            添加
-          </NButton>
         </NSpace>
       </NCard>
 
       <!-- 已监控模型列表 -->
       <NCard title="已监控模型">
-        <NDataTable
-          :columns="columns"
-          :data="trackedModels"
-          :loading="loading"
-          :pagination="false"
-          size="small"
-        />
+        <NSpace vertical :size="12">
+          <NDataTable
+            :columns="columns"
+            :data="trackedModels"
+            :loading="loading"
+            :pagination="false"
+            size="small"
+          />
+
+          <!-- 添加模型 -->
+          <NSpace :size="12">
+            <NSelect
+              v-model:value="selectedModelId"
+              :options="availableModelOptions"
+              placeholder="选择模型"
+              filterable
+              style="width: 400px"
+            />
+            <NButton type="primary" :disabled="!selectedModelId" @click="handleAddModel">
+              添加到监控
+            </NButton>
+          </NSpace>
+        </NSpace>
+      </NCard>
+
+      <!-- 实时日志 -->
+      <NCard title="实时日志">
+        <div class="logs-container">
+          <div
+            v-for="(log, index) in reversedLogs"
+            :key="index"
+            :class="['log-line', getLogClass(log)]"
+          >
+            {{ log }}
+          </div>
+          <div v-if="status.logs.length === 0" class="empty-logs">
+            暂无日志
+          </div>
+        </div>
       </NCard>
     </NSpace>
   </div>
@@ -209,20 +210,6 @@ const columns: DataTableColumns<TrackedModel> = [
     width: 180,
   },
   {
-    title: 'Provider',
-    key: 'provider',
-    width: 100,
-  },
-  {
-    title: '启用',
-    key: 'enabled',
-    width: 80,
-    render: (row) => h(NSwitch, {
-      value: row.enabled,
-      onUpdateValue: (val) => handleToggleEnabled(row.model_id, val),
-    }),
-  },
-  {
     title: '最新状态',
     key: 'last_status',
     width: 100,
@@ -279,6 +266,15 @@ const columns: DataTableColumns<TrackedModel> = [
     key: 'next_run_at',
     width: 170,
     render: (row) => formatDateTime(row.next_run_at),
+  },
+  {
+    title: '启用',
+    key: 'enabled',
+    width: 80,
+    render: (row) => h(NSwitch, {
+      value: row.enabled,
+      onUpdateValue: (val) => handleToggleEnabled(row.model_id, val),
+    }),
   },
   {
     title: '操作',
