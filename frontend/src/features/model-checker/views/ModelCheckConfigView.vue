@@ -26,15 +26,18 @@
       <!-- 全局设置 -->
       <NCard title="全局设置">
         <NSpace vertical :size="12">
-          <NForm label-placement="left" label-width="140">
-            <NFormItem label="超时时间(秒)">
-              <NInputNumber
-                v-model:value="settings.timeout_seconds"
-                :min="1"
-                placeholder="30"
-              />
+          <NForm label-placement="left" label-width="80">
+            <NFormItem label="超时时间">
+              <NSpace :size="8" align="center">
+                <NInputNumber
+                  v-model:value="settings.timeout_seconds"
+                  :min="1"
+                  placeholder="30"
+                />
+                <span style="color: #999;">秒</span>
+              </NSpace>
             </NFormItem>
-            <NFormItem label="测试 API Key">
+            <NFormItem label="API密钥">
               <NInput
                 v-model:value="settings.test_api_key"
                 placeholder="sk-ant-..."
@@ -405,7 +408,6 @@ function resetCronDraft(row: TrackedModel) {
 let pollTimer: number | null = null
 
 async function loadData() {
-  loading.value = true
   try {
     const [statusRes, modelsRes] = await Promise.all([
       getModelCheckerStatus(),
@@ -416,8 +418,6 @@ async function loadData() {
     syncCronDrafts(modelsRes)
   } catch (error) {
     message.error(errorText(error, '加载数据失败', 'Failed to load model checker data'))
-  } finally {
-    loading.value = false
   }
 }
 
