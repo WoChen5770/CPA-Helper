@@ -64,17 +64,17 @@
                     </template>
                     <div style="font-size: 12px; line-height: 1.7; color: #333;">
                       <div style="font-weight: 600; margin-bottom: 6px;">支持的占位符</div>
-                      <div><code>{{random}}</code> - 随机数 0-999999</div>
-                      <div><code>{{date}}</code> - 当前日期 20260702</div>
-                      <div><code>{{timestamp}}</code> - Unix 时间戳</div>
-                      <div><code>{{time}}</code> - 当前时间 14:30:25</div>
-                      <div><code>{{uuid}}</code> - UUID v4</div>
-                      <div><code>{{random:1-100}}</code> - 指定范围随机数</div>
-                      <div><code>{{choice:A|B|C}}</code> - 从选项中随机选择</div>
+                      <div><code v-pre>{{random}}</code> - 随机数 0-999999</div>
+                      <div><code v-pre>{{date}}</code> - 当前日期 20260702</div>
+                      <div><code v-pre>{{timestamp}}</code> - Unix 时间戳</div>
+                      <div><code v-pre>{{time}}</code> - 当前时间 14:30:25</div>
+                      <div><code v-pre>{{uuid}}</code> - UUID v4</div>
+                      <div><code v-pre>{{random:1-100}}</code> - 指定范围随机数</div>
+                      <div><code v-pre>{{choice:A|B|C}}</code> - 从选项中随机选择</div>
                       <div style="font-weight: 600; margin: 10px 0 6px;">示例</div>
-                      <div><code>今天是{{date}}，现在几点？</code></div>
-                      <div><code>计算 {{random:1-100}} + {{random:1-100}} = ?</code></div>
-                      <div><code>描述{{choice:春天|夏天|秋天|冬天}}</code></div>
+                      <div><code v-pre>今天是{{date}}，现在几点？</code></div>
+                      <div><code v-pre>计算 {{random:1-100}} + {{random:1-100}} = ?</code></div>
+                      <div><code v-pre>描述{{choice:春天|夏天|秋天|冬天}}</code></div>
                     </div>
                   </NPopover>
                 </div>
