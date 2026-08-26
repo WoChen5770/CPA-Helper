@@ -100,6 +100,10 @@ export interface CardShopProductItem {
   group?: string | null
 }
 
+export interface CardShopProductSummary {
+  totalCount?: number | null
+}
+
 export interface CardShop {
   id?: string | null
   shopName?: string | null
@@ -108,6 +112,7 @@ export interface CardShop {
   shopSellCount?: number | null
   productsInStock?: string[] | null
   productItems?: CardShopProductItem[] | null
+  productSummary?: CardShopProductSummary | null
   notes?: string | null
   updatedAt?: string | null
 }
