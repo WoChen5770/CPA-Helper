@@ -435,6 +435,15 @@ export interface ModelPricePayload {
   request_usd: number | null
 }
 
+export interface LiteLLMPriceEntry {
+  model: string
+  provider: string
+  input_usd_per_million: number
+  output_usd_per_million: number
+  cache_read_usd_per_million: number
+  cache_creation_usd_per_million: number
+}
+
 export interface ModelPriceSyncResponse {
   source_url: string
   total_entries: number

@@ -18,6 +18,7 @@ import {
   useDialog,
   useMessage,
   type DataTableColumns,
+  type SelectOption,
 } from 'naive-ui'
 import { Database, Layers3, RefreshCw, Search, Server, Settings2 } from 'lucide-vue-next'
 
@@ -25,6 +26,7 @@ import {
   createModelPrice,
   deleteModelPrice,
   getLiteLLMProxySettings,
+  listLiteLLMPriceEntries,
   listModelPriceCatalog,
   listModelPrices,
   syncLitellmModelPrices,
@@ -32,6 +34,7 @@ import {
   updateModelPrice,
 } from '@/features/pricing/api/pricingApi'
 import type {
+  LiteLLMPriceEntry,
   LiteLLMProxySettingsPayload,
   ModelPrice,
   ModelPriceCatalogResponse,
@@ -85,6 +88,7 @@ const proxyModalOpen = ref(false)
 const isProxyLoading = ref(false)
 const isProxySaving = ref(false)
 const editingId = ref<number | null>(null)
+const litellmEntryValue = ref<string | null>(null)
 const prices = ref<ModelPrice[]>([])
 const catalog = ref<ModelPriceCatalogResponse | null>(null)
 const selectedProvider = ref<string | null>(null)
@@ -367,7 +371,77 @@ function priceMatchesSearch(row: PriceDisplayRow) {
   )
 }
 
+const litellmEntries = ref<LiteLLMPriceEntry[]>([])
+const isLitellmEntriesLoading = ref(false)
+const litellmEntriesLoaded = ref(false)
+
+const litellmEntryOptions = computed(() =>
+  litellmEntries.value.map((entry) => ({
+    label: `${entry.model} · ${entry.provider}`,
+    value: `${entry.model}\n${entry.provider}`,
+    entry,
+    search: `${entry.model} ${entry.provider}`.toLowerCase(),
+  })),
+)
+
+function filterLitellmEntry(pattern: string, option: SelectOption) {
+  const search = typeof (option as { search?: unknown }).search === 'string'
+    ? (option as { search: string }).search
+    : String(option.label ?? '')
+  const query = pattern.trim().toLowerCase()
+  if (!query) {
+    return true
+  }
+  return query
+    .split(/\s+/)
+    .every((token) => search.includes(token))
+}
+
+async function ensureLitellmEntries() {
+  if (litellmEntriesLoaded.value || isLitellmEntriesLoading.value) {
+    return
+  }
+  isLitellmEntriesLoading.value = true
+  try {
+    litellmEntries.value = await listLiteLLMPriceEntries()
+    litellmEntriesLoaded.value = true
+  } catch (error) {
+    message.error(errorText(error, '加载 LiteLLM 价格库失败', 'Failed to load LiteLLM price entries'))
+  } finally {
+    isLitellmEntriesLoading.value = false
+  }
+}
+
+function handleLitellmMenuShow(show: boolean) {
+  if (show) {
+    void ensureLitellmEntries()
+  }
+}
+
+function handleLitellmEntrySelected(value: string | null) {
+  if (!value) {
+    return
+  }
+  const separator = value.indexOf('\n')
+  if (separator <= 0) {
+    return
+  }
+  const model = value.slice(0, separator)
+  const provider = value.slice(separator + 1)
+  const entry = litellmEntries.value.find(
+    (item) => item.model === model && item.provider === provider,
+  )
+  if (!entry) {
+    return
+  }
+  form.input_usd_per_million = entry.input_usd_per_million
+  form.output_usd_per_million = entry.output_usd_per_million
+  form.cache_read_usd_per_million = entry.cache_read_usd_per_million
+  form.cache_creation_usd_per_million = entry.cache_creation_usd_per_million
+}
+
 function resetForm() {
+  litellmEntryValue.value = null
   editingId.value = null
   form.provider = ''
   form.model = ''
@@ -393,6 +467,7 @@ async function refresh() {
 
 function openCreate(prefill: Partial<ModelPricePayload> = {}) {
   resetForm()
+  litellmEntryValue.value = null
   form.provider = prefill.provider ?? ''
   form.model = prefill.model ?? ''
   form.input_usd_per_million = prefill.input_usd_per_million ?? 0
@@ -412,6 +487,7 @@ function openCreateForRow(row: PriceDisplayRow) {
 
 function openEdit(row: ModelPrice) {
   editingId.value = row.id
+  litellmEntryValue.value = null
   form.provider = row.provider
   form.model = row.model
   form.input_usd_per_million = row.input_usd_per_million
@@ -823,6 +899,25 @@ onBeforeUnmount(() => {
       class="price-modal"
     >
       <NForm :model="form" label-placement="top">
+        <NFormItem
+          :label="t('从 LiteLLM 价格库选择（可选）', 'Pick from LiteLLM price library (optional)')"
+        >
+          <NSelect
+            v-model:value="litellmEntryValue"
+            clearable
+            filterable
+            remote
+            :virtual-scroll="true"
+            :consistent-menu-width="false"
+            :loading="isLitellmEntriesLoading"
+            :options="litellmEntryOptions"
+            :filter="filterLitellmEntry"
+            :max-tag-count="1"
+            :placeholder="t('输入模型名搜索，选择后自动填充价格', 'Search by model name; prices fill in automatically')"
+            @update:value="handleLitellmEntrySelected"
+            @update-show="handleLitellmMenuShow"
+          />
+        </NFormItem>
         <div class="form-grid">
           <NFormItem :label="t('服务商', 'Provider')">
             <NInput v-model:value="form.provider" />

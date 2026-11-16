@@ -136,6 +136,12 @@ func (a *App) handleModelPriceByPath(w http.ResponseWriter, r *http.Request) err
 		}
 		return a.handleLiteLLMProxySettings(w, r)
 	}
+	if path == "litellm-entries" {
+		if err := requireMethod(r, http.MethodGet); err != nil {
+			return err
+		}
+		return a.handleLiteLLMPriceEntries(w, r)
+	}
 	if path == "catalog" {
 		if _, err := a.adminUser(r.Context(), r); err != nil {
 			return err
@@ -718,6 +724,67 @@ func litellmEntryToPrice(modelName string, rawEntry any) (modelPricePayload, boo
 		return modelPricePayload{}, false
 	}
 	return payload, true
+}
+
+type liteLLMPriceEntry struct {
+	Model                      string  `json:"model"`
+	Provider                   string  `json:"provider"`
+	InputUSDPerMillion         float64 `json:"input_usd_per_million"`
+	OutputUSDPerMillion        float64 `json:"output_usd_per_million"`
+	CacheReadUSDPerMillion     float64 `json:"cache_read_usd_per_million"`
+	CacheCreationUSDPerMillion float64 `json:"cache_creation_usd_per_million"`
+}
+
+func liteLLMPriceEntriesFromData(rawData map[string]any) []liteLLMPriceEntry {
+	entries := make([]liteLLMPriceEntry, 0, len(rawData))
+	for modelName, rawEntry := range rawData {
+		if modelName == "sample_spec" {
+			continue
+		}
+		payload, ok := litellmEntryToPrice(modelName, rawEntry)
+		if !ok {
+			continue
+		}
+		entries = append(entries, liteLLMPriceEntry{
+			Model:                      payload.Model,
+			Provider:                   payload.Provider,
+			InputUSDPerMillion:         payload.InputUSDPerMillion,
+			OutputUSDPerMillion:        payload.OutputUSDPerMillion,
+			CacheReadUSDPerMillion:     payload.CacheReadUSDPerMillion,
+			CacheCreationUSDPerMillion: payload.CacheCreationUSDPerMillion,
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Model != entries[j].Model {
+			return entries[i].Model < entries[j].Model
+		}
+		return entries[i].Provider < entries[j].Provider
+	})
+	return entries
+}
+
+func (a *App) handleLiteLLMPriceEntries(w http.ResponseWriter, r *http.Request) error {
+	if _, err := a.adminUser(r.Context(), r); err != nil {
+		return err
+	}
+	cfg, err := a.loadConfig(r.Context())
+	if err != nil {
+		return err
+	}
+	client, err := liteLLMHTTPClient(30*time.Second, cfg.LiteLLMProxy)
+	if err != nil {
+		return err
+	}
+	_, rawPayload, err := doJSON(r.Context(), client, http.MethodGet, defaultLiteLLMPricingURL, nil, nil)
+	if err != nil {
+		return validationError("下载 LiteLLM 价格数据失败")
+	}
+	var rawData map[string]any
+	if err := json.Unmarshal(rawPayload, &rawData); err != nil {
+		return validationError("LiteLLM 价格数据不是有效 JSON")
+	}
+	writeJSON(w, http.StatusOK, liteLLMPriceEntriesFromData(rawData))
+	return nil
 }
 
 func usdPerMillion(value any) float64 {

@@ -1,5 +1,6 @@
 import { apiClient } from '@/shared/api/apiClient'
 import type {
+  LiteLLMPriceEntry,
   LiteLLMProxySettings,
   LiteLLMProxySettingsPayload,
   ModelPrice,
@@ -30,6 +31,10 @@ export function deleteModelPrice(id: number): Promise<void> {
 
 export function syncLitellmModelPrices(): Promise<ModelPriceSyncResponse> {
   return apiClient.post<ModelPriceSyncResponse>('/model-prices/sync/litellm')
+}
+
+export function listLiteLLMPriceEntries(): Promise<LiteLLMPriceEntry[]> {
+  return apiClient.get<LiteLLMPriceEntry[]>('/model-prices/litellm-entries')
 }
 
 export function getLiteLLMProxySettings(): Promise<LiteLLMProxySettings> {
