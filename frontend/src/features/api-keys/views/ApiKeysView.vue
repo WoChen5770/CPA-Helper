@@ -79,8 +79,8 @@ const requestTestError = ref<string | null>(null)
 const isAvailableModelsLoading = ref(false)
 const isRequestTesting = ref(false)
 const editingApiKeyHash = ref<string | null>(null)
+const apiKeyValue = ref('')
 const apiKeyDescription = ref('VSCode')
-const customApiKey = ref('')
 const generatedApiKey = ref<string | null>(null)
 const generatedApiKeyHash = ref<string | null>(null)
 const visibleApiKeyHashes = ref<Set<string>>(new Set())
@@ -511,8 +511,8 @@ function openCreateDialog() {
     return
   }
   editingApiKeyHash.value = null
+  apiKeyValue.value = ''
   apiKeyDescription.value = 'VSCode'
-  customApiKey.value = ''
   generatedApiKey.value = null
   generatedApiKeyHash.value = null
   editorVisible.value = true
@@ -525,8 +525,8 @@ function closeGeneratedApiKey() {
 
 function editApiKey(row: UserApiKeySummary) {
   editingApiKeyHash.value = row.api_key_hash
+  apiKeyValue.value = ''
   apiKeyDescription.value = row.description || 'VSCode'
-  customApiKey.value = ''
   generatedApiKey.value = null
   generatedApiKeyHash.value = null
   editorVisible.value = true
@@ -568,24 +568,23 @@ async function saveApiKey() {
     message.error(t('API KEY 描述不能为空', 'API key description is required'))
     return
   }
-  const customKey = customApiKey.value.trim()
-  if (customKey && customKey.length < 10) {
+  const apiKey = apiKeyValue.value.trim()
+  if (apiKey && apiKey.length < 10) {
     message.error(t('自定义密钥长度不能少于 10 个字符', 'Custom key must be at least 10 characters'))
     return
   }
+  const payload = { description, ...(apiKey ? { api_key: apiKey } : {}) }
   isSaving.value = true
   try {
     if (editingApiKeyHash.value) {
-      await updateApiKey(editingApiKeyHash.value, { description })
+      await updateApiKey(editingApiKeyHash.value, payload)
+      visibleApiKeyHashes.value.delete(editingApiKeyHash.value)
+      availableModels.value = null
       message.success(t('API 密钥已更新', 'API key updated'))
     } else {
       if (!canCreateApiKey.value) {
         message.error(t('当前账号额度已用尽，API KEY 已暂停', 'This account has exhausted its quota, so API keys are paused'))
         return
-      }
-      const payload: { description: string; api_key?: string } = { description }
-      if (customKey) {
-        payload.api_key = customKey
       }
       const created = await createApiKey(payload)
       generatedApiKey.value = created.api_key ?? null
@@ -594,6 +593,7 @@ async function saveApiKey() {
     }
     editorVisible.value = false
     editingApiKeyHash.value = null
+    apiKeyValue.value = ''
     await refresh()
   } catch (error) {
     message.error(errorText(error, '保存 API 密钥失败', 'Failed to save API key'))
@@ -784,6 +784,18 @@ onMounted(refresh)
       :style="{ width: 'min(520px, calc(100vw - 32px))' }"
     >
       <NForm label-placement="top">
+        <NFormItem :label="editingApiKeyHash ? t('新 API KEY', 'New API key') : t('API KEY（可选）', 'API key (optional)')">
+          <NInput
+            v-model:value="apiKeyValue"
+            type="password"
+            show-password-on="click"
+            autocomplete="off"
+            :input-props="{ 'aria-label': editingApiKeyHash ? t('新 API KEY', 'New API key') : t('API KEY（可选）', 'API key (optional)') }"
+            :disabled="isSaving || !canCreateApiKey"
+            :placeholder="editingApiKeyHash ? t('留空保留当前密钥', 'Leave blank to keep the current key') : t('输入自定义密钥，留空自动生成', 'Enter a custom key or leave blank to generate one')"
+            @keyup.enter="saveApiKey"
+          />
+        </NFormItem>
         <NFormItem :label="t('API KEY 描述', 'API key description')">
           <NInput
             v-model:value="apiKeyDescription"
@@ -792,14 +804,9 @@ onMounted(refresh)
             @keyup.enter="saveApiKey"
           />
         </NFormItem>
-        <NFormItem v-if="!editingApiKeyHash" :label="t('自定义密钥（可选）', 'Custom key (optional)')">
-          <NInput
-            v-model:value="customApiKey"
-            :disabled="isSaving"
-            :placeholder="t('留空则自动生成，最少 10 个字符', 'Leave blank to auto-generate, min 10 chars')"
-            @keyup.enter="saveApiKey"
-          />
-        </NFormItem>
+        <NAlert v-if="editingApiKeyHash && apiKeyValue.trim()" type="info" :bordered="false" class="key-change-notice">
+          {{ t('更换后旧密钥将失效，请同步更新客户端中的 API KEY。', 'The old key will stop working after replacement. Update the API key in your clients as well.') }}
+        </NAlert>
         <div class="modal-actions">
           <NButton secondary :disabled="isSaving" @click="editorVisible = false">{{ t('取消', 'Cancel') }}</NButton>
           <NButton
@@ -1005,6 +1012,10 @@ onMounted(refresh)
   overflow-wrap: anywhere;
   font-family: Consolas, 'SFMono-Regular', 'Microsoft YaHei UI', monospace;
   font-size: 13px;
+}
+
+.key-change-notice {
+  margin-bottom: 16px;
 }
 
 .modal-actions {

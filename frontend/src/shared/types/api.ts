@@ -623,12 +623,14 @@ export interface UserApiKeyBindPayload {
 }
 
 export interface ApiKeyCreatePayload {
+  api_key?: string
   description: string
   api_key?: string
 }
 
 export interface ApiKeyUpdatePayload {
-  description: string
+  api_key?: string
+  description?: string
 }
 
 // Model Checker types
