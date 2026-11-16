@@ -906,13 +906,11 @@ onBeforeUnmount(() => {
             v-model:value="litellmEntryValue"
             clearable
             filterable
-            remote
             :virtual-scroll="true"
             :consistent-menu-width="false"
             :loading="isLitellmEntriesLoading"
             :options="litellmEntryOptions"
             :filter="filterLitellmEntry"
-            :max-tag-count="1"
             :placeholder="t('输入模型名搜索，选择后自动填充价格', 'Search by model name; prices fill in automatically')"
             @update:value="handleLitellmEntrySelected"
             @update-show="handleLitellmMenuShow"
