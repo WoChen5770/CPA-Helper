@@ -47,7 +47,7 @@ interface Props {
   scope: UsageScope
 }
 
-const AUTO_REFRESH_INTERVAL_MS = 5000
+const AUTO_REFRESH_INTERVAL_MS = 3000
 const HOUR_MS = 60 * 60 * 1000
 const DAY_MS = 24 * HOUR_MS
 const ALL_RECORDS_START_PARAM = '0001-01-01T00:00:00+08:00'
@@ -55,10 +55,10 @@ const ALL_RECORDS_END_PARAM = '9999-12-31T23:59:59+08:00'
 const RECORDS_TABLE_MIN_ROW_HEIGHT = 40
 const RECORDS_TABLE_COLUMN_WIDTHS = {
   timestamp: 150,
-  user: 132,
-  apiKeyDescription: 118,
-  model: 132,
-  source: 190,
+  user: 100,
+  apiKeyDescription: 96,
+  model: 260,
+  source: 120,
   failed: 68,
   ttft: 110,
   latency: 110,
@@ -308,7 +308,7 @@ const refreshStatusText = computed(() => {
   if (!lastRefreshTime) {
     return autoRefreshError.value
       ? t('自动刷新异常 · 尚无成功同步', 'Auto refresh error · no successful sync yet')
-      : t('每 5 秒自动刷新 · 等待首次同步', 'Auto refresh every 5 seconds · waiting for first sync')
+      : t('每 3 秒自动刷新 · 等待首次同步', 'Auto refresh every 3 seconds · waiting for first sync')
   }
   const lastRefreshText = new Intl.DateTimeFormat(currentLanguage.value === 'zh' ? 'zh-CN' : 'en-US', {
     hour: '2-digit',
@@ -318,7 +318,7 @@ const refreshStatusText = computed(() => {
   if (autoRefreshError.value) {
     return t(`自动刷新异常 · 最近成功 ${lastRefreshText}`, `Auto refresh error · last success ${lastRefreshText}`)
   }
-  return t(`每 5 秒自动刷新 · 最近 ${lastRefreshText}`, `Auto refresh every 5 seconds · latest ${lastRefreshText}`)
+  return t(`每 3 秒自动刷新 · 最近 ${lastRefreshText}`, `Auto refresh every 3 seconds · latest ${lastRefreshText}`)
 })
 
 function buildFilters(): UsageFilters {
@@ -871,8 +871,15 @@ const columns = computed<DataTableColumns<UsageRecordListItem>>(() => [
 
 let autoRefreshTimer: number | undefined
 
+function handleWindowVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    void refresh({ silent: true })
+  }
+}
+
 onMounted(() => {
   desktopRecordsLayoutQuery.addEventListener('change', handleRecordsLayoutChange)
+  document.addEventListener('visibilitychange', handleWindowVisibilityChange)
   void refresh()
   autoRefreshTimer = window.setInterval(() => {
     void refresh({ silent: true })
@@ -881,6 +888,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   desktopRecordsLayoutQuery.removeEventListener('change', handleRecordsLayoutChange)
+  document.removeEventListener('visibilitychange', handleWindowVisibilityChange)
   if (autoRefreshTimer !== undefined) {
     window.clearInterval(autoRefreshTimer)
   }
