@@ -369,6 +369,7 @@ export interface UsageOverviewResponse {
 
 export interface UsageRecordListItem {
   id: number
+  created_at: string
   timestamp: string
   api_key_description: string | null
   user_id: number | null

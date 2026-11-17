@@ -706,7 +706,7 @@ const detailRows = computed(() => {
     return []
   }
   const rows = [
-    { label: t('时间', 'Time'), value: formatDateTime(record.timestamp) },
+    { label: t('时间', 'Time'), value: formatDateTime(record.created_at) },
     { label: t('模型', 'Model'), value: formatModelWithReasoning(record) },
     { label: t('服务商', 'Provider'), value: textOrDash(record.provider) },
     { label: t('接口', 'Endpoint'), value: textOrDash(record.endpoint) },
@@ -739,9 +739,9 @@ const detailRows = computed(() => {
 const columns = computed<DataTableColumns<UsageRecordListItem>>(() => [
   {
     title: t('时间', 'Time'),
-    key: 'timestamp',
+    key: 'created_at',
     width: RECORDS_TABLE_COLUMN_WIDTHS.timestamp,
-    render: (row) => formatDateTime(row.timestamp),
+    render: (row) => formatDateTime(row.created_at),
   },
   ...(isAccountScope.value
     ? []
