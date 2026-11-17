@@ -58,7 +58,7 @@ const RECORDS_TABLE_COLUMN_WIDTHS = {
   user: 88,
   apiKeyDescription: 78,
   model: 210,
-  source: 105,
+  source: 120,
   failed: 60,
   ttft: 85,
   latency: 92,
