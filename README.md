@@ -95,6 +95,7 @@ For clarity, model requests initiated by an Agent are still sent directly from t
 - **CLIProxyAPI / CPAMC integration**: Configure the service URL, management key, usage queue and local collector options to persist remote usage events into SQLite.
 - **Codex auth file inspection**: Support Cron scheduling, quota thresholds, check-only mode, conditional scanning, concurrent workers, priority rules, account enable/disable and deletion.
 - **Local-first data storage**: Use SQLite and the `data/` directory by default, with `CPA_HELPER_DATA_DIR` available for overriding the runtime data path.
+- **Automatic 30-day retention**: Delete expired usage, quota-charge and inspection history at startup and every 24 hours, then compact SQLite when enough free pages accumulate.
 - **Modern admin interface**: Built with Vue 3, Naive UI, ECharts and lucide icons, with light, dark and system theme modes.
 
 ## Screenshots
@@ -408,6 +409,8 @@ Override the runtime data directory with:
 ```powershell
 $env:CPA_HELPER_DATA_DIR="<your-data-dir>"
 ```
+
+At startup and every 24 hours, CPA-Helper removes usage records, quota charges, Codex inspection history and model-check history older than 30 days. After cleanup, it runs VACUUM when the SQLite free-page list exceeds 64 MiB so the database file can release disk space.
 
 Then start the backend service.
 

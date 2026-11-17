@@ -241,9 +241,9 @@ func TestRunMigrationsRepairsOldPythonSchemaWithoutOldCode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app, err := New()
+	app, err := NewWithOptions(context.Background(), NewOptions{Migrate: true})
 	if err != nil {
-		t.Fatalf("New() failed: %v", err)
+		t.Fatalf("NewWithOptions failed: %v", err)
 	}
 	defer app.Close()
 

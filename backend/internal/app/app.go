@@ -58,6 +58,8 @@ type App struct {
 	keeper           *KeeperRunner
 	keeperUsageCache keeperWindowUsageCache
 	modelCheckRunner *ModelCheckRunner
+	retentionCancel  context.CancelFunc
+	retentionDone    chan struct{}
 }
 
 type AppError struct {
@@ -152,6 +154,7 @@ func NewWithOptions(ctx context.Context, options NewOptions) (*App, error) {
 }
 
 func (a *App) startBackground(ctx context.Context) {
+	a.startRetention(ctx)
 	a.collector = NewCollectorRunner(a)
 	a.keeper = NewKeeperRunner(a)
 	a.modelCheckRunner = newModelCheckRunner(a)
@@ -173,6 +176,12 @@ func (a *App) Close() {
 		if a.modelCheckRunner.cron != nil {
 			a.modelCheckRunner.cron.Stop()
 		}
+	}
+	if a.retentionCancel != nil {
+		a.retentionCancel()
+	}
+	if a.retentionDone != nil {
+		<-a.retentionDone
 	}
 	if a.db != nil {
 		a.db.Close()

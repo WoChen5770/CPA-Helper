@@ -95,6 +95,7 @@ CPA-Helper 是面向 CLIProxyAPI / CPA 用户的本地自托管多用户管理�
 - **CLIProxyAPI / CPAMC 集成**：配置服务地址、管理密钥、usage 队列和本地采集参数，将远端 usage 事件落入本地 SQLite。
 - **Codex auth file 巡检**：支持 Cron 调度、额度阈值、只检查不修改、按条件扫描、并发 Worker、优先级规则、账号启停和删除维护。
 - **本地优先的数据策略**：默认使用 SQLite 和 `data/` 目录，支持通过 `CPA_HELPER_DATA_DIR` 覆盖运行数据路径。
+- **自动保留 30 天历史**：项目启动时以及之后每 24 小时清理过期的用量、额度扣费和巡检历史，并在空闲页足够多时压缩 SQLite 文件。
 - **现代化管理界面**：基于 Vue 3、Naive UI、ECharts 和 lucide 图标，支持浅色、暗色和跟随系统主题。
 
 ## 截图预览
@@ -406,6 +407,8 @@ data/db/cpa_helper.sqlite3
 ```powershell
 $env:CPA_HELPER_DATA_DIR="<your-data-dir>"
 ```
+
+项目启动时以及之后每 24 小时，CPA-Helper 会自动删除超过 30 天的 usage 记录、额度扣费记录、Codex 巡检历史和模型巡检历史。清理后若 SQLite 空闲页超过 64 MiB，会执行 VACUUM，确保数据库文件实际释放磁盘空间。
 
 然后再启动后端服务。
 
